@@ -12,6 +12,7 @@ mod chain;
 mod cli;
 mod config;
 mod error;
+mod log;
 mod wallet;
 
 use cli::Commands;
@@ -40,32 +41,34 @@ struct Cli {
 async fn main() -> Result<(), QuantusError> {
     let cli = Cli::parse();
 
-    // Initialize logging
+    // Set up our custom logging
+    log::set_verbose(cli.verbose);
+
+    // Initialize standard logging
     if cli.verbose {
         env_logger::Builder::from_default_env()
-            .filter_level(log::LevelFilter::Debug)
+            .filter_level(::log::LevelFilter::Debug)
             .init();
     } else {
         env_logger::Builder::from_default_env()
-            .filter_level(log::LevelFilter::Info)
+            .filter_level(::log::LevelFilter::Info)
             .init();
     }
 
     // Print welcome message
-    println!("{}", "🔮 Quantus CLI".bright_cyan().bold());
-    println!("{}", "Connecting to the quantum future...".dimmed());
-    println!();
+    log_print!("{}", "🔮 Quantus CLI".bright_cyan().bold());
+    log_verbose!("{}", "Connecting to the quantum future...".dimmed());
+    log_verbose!("");
 
     // Execute the command
     match cli::execute_command(cli.command, &cli.node_url).await {
         Ok(_) => {
-            println!();
-            println!("{}", "✅ Command executed successfully!".green());
+            log_verbose!("");
+            log_success!("Command executed successfully!");
             Ok(())
         }
         Err(e) => {
-            eprintln!();
-            eprintln!("{} {}", "❌ Error:".red().bold(), e);
+            log_error!("{}", e);
             std::process::exit(1);
         }
     }

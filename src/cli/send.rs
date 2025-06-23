@@ -1,6 +1,7 @@
 use crate::{
     chain::client::ChainClient,
     error::Result,
+    log_error, log_print, log_success, log_verbose,
     wallet::{QuantumKeyPair, WalletManager},
 };
 use colored::Colorize;
@@ -12,7 +13,7 @@ pub async fn handle_send_command(
     amount: u128,
     node_url: &str,
 ) -> Result<()> {
-    println!(
+    log_verbose!(
         "🚀 {} Sending {} tokens to {}",
         "SEND".bright_cyan().bold(),
         amount.to_string().bright_yellow().bold(),
@@ -23,7 +24,7 @@ pub async fn handle_send_command(
     let wallet_manager = WalletManager::new()?;
     let wallet_data = wallet_manager.load_wallet(&from_wallet)?;
 
-    println!("📦 Using wallet: {}", from_wallet.bright_blue().bold());
+    log_verbose!("📦 Using wallet: {}", from_wallet.bright_blue().bold());
 
     // TODO: Get password securely for decryption
     let password = get_password_from_user(&format!("Enter password for wallet '{}'", from_wallet))?;
@@ -38,7 +39,7 @@ pub async fn handle_send_command(
     let from_account_id = keypair.to_account_id_ss58check();
     let balance = chain_client.get_balance(&from_account_id).await?;
 
-    println!(
+    log_verbose!(
         "💰 Current balance: {} tokens",
         balance.to_string().bright_yellow()
     );
@@ -51,37 +52,37 @@ pub async fn handle_send_command(
     }
 
     // Create and submit transaction
-    println!(
+    log_verbose!(
         "✍️  {} Signing transaction...",
         "SIGN".bright_magenta().bold()
     );
 
     let tx_hash = chain_client.transfer(&keypair, &to_address, amount).await?;
 
-    println!(
+    log_print!(
         "✅ {} Transaction submitted!",
         "SUCCESS".bright_green().bold()
     );
-    println!("📍 Transaction hash: {}", tx_hash.bright_blue());
-    println!("🔗 Waiting for confirmation...");
+    log_print!("📍 Transaction hash: {}", tx_hash.bright_blue());
+    log_verbose!("🔗 Waiting for confirmation...");
 
     // Wait for transaction confirmation
     let success = chain_client.wait_for_finalization(&tx_hash).await?;
 
     if success {
-        println!(
+        log_success!(
             "🎉 {} Transaction confirmed!",
             "FINALIZED".bright_green().bold()
         );
 
         // Show updated balance
         let new_balance = chain_client.get_balance(&from_account_id).await?;
-        println!(
+        log_print!(
             "💰 New balance: {} tokens",
             new_balance.to_string().bright_yellow()
         );
     } else {
-        println!("❌ {} Transaction failed!", "ERROR".bright_red().bold());
+        log_error!("Transaction failed!");
     }
 
     Ok(())
@@ -89,7 +90,7 @@ pub async fn handle_send_command(
 
 /// Get password from user (placeholder - should use secure input)
 fn get_password_from_user(prompt: &str) -> Result<String> {
-    println!("{}", prompt.bright_yellow());
+    log_print!("{}", prompt.bright_yellow());
     // TODO: Use secure password input (rpassword crate)
     // For now, using placeholder
     Ok("password123".to_string())

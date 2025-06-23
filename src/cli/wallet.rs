@@ -1,6 +1,11 @@
-use crate::wallet::WalletManager;
+use crate::{
+    error::Result,
+    log_error, log_print, log_success, log_verbose,
+    wallet::{WalletData, WalletManager},
+};
 use clap::Subcommand;
 use colored::Colorize;
+use std::io::{self, Write};
 
 /// Wallet subcommands
 #[derive(Subcommand, Debug)]
@@ -75,10 +80,7 @@ pub async fn handle_wallet_command(
 ) -> crate::error::Result<()> {
     match command {
         WalletCommands::Create { name, password } => {
-            println!(
-                "{}",
-                "🔐 Creating new quantum wallet...".bright_blue().bold()
-            );
+            log_print!("🔐 Creating new quantum wallet...");
 
             let wallet_manager = WalletManager::new()?;
 
@@ -87,10 +89,10 @@ pub async fn handle_wallet_command(
                 .await
             {
                 Ok(wallet_info) => {
-                    println!("Wallet name: {}", name.bright_green());
-                    println!("Address: {}", wallet_info.address.bright_cyan());
-                    println!("Key type: {}", wallet_info.key_type.bright_yellow());
-                    println!(
+                    log_success!("Wallet name: {}", name.bright_green());
+                    log_success!("Address: {}", wallet_info.address.bright_cyan());
+                    log_success!("Key type: {}", wallet_info.key_type.bright_yellow());
+                    log_success!(
                         "Created: {}",
                         wallet_info
                             .created_at
@@ -98,10 +100,10 @@ pub async fn handle_wallet_command(
                             .to_string()
                             .dimmed()
                     );
-                    println!("{}", "✅ Wallet created successfully!".green());
+                    log_success!("✅ Wallet created successfully!");
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to create wallet: {}", e).red());
+                    log_error!("{}", format!("❌ Failed to create wallet: {}", e).red());
                     return Err(e);
                 }
             }
@@ -110,10 +112,7 @@ pub async fn handle_wallet_command(
         }
 
         WalletCommands::View { name, all } => {
-            println!(
-                "{}",
-                "👁️  Viewing wallet information...".bright_blue().bold()
-            );
+            log_print!("👁️  Viewing wallet information...");
 
             let wallet_manager = WalletManager::new()?;
 
@@ -122,19 +121,19 @@ pub async fn handle_wallet_command(
                 match wallet_manager.list_wallets() {
                     Ok(wallets) => {
                         if wallets.is_empty() {
-                            println!("{}", "No wallets found.".dimmed());
+                            log_print!("{}", "No wallets found.".dimmed());
                         } else {
-                            println!("All wallets ({}):\n", wallets.len());
+                            log_print!("All wallets ({}):\n", wallets.len());
 
                             for (i, wallet) in wallets.iter().enumerate() {
-                                println!(
+                                log_print!(
                                     "{}. {}",
                                     (i + 1).to_string().bright_yellow(),
                                     wallet.name.bright_green()
                                 );
-                                println!("   Address: {}", wallet.address.bright_cyan());
-                                println!("   Type: {}", wallet.key_type.bright_yellow());
-                                println!(
+                                log_print!("   Address: {}", wallet.address.bright_cyan());
+                                log_print!("   Type: {}", wallet.key_type.bright_yellow());
+                                log_print!(
                                     "   Created: {}",
                                     wallet
                                         .created_at
@@ -143,13 +142,13 @@ pub async fn handle_wallet_command(
                                         .dimmed()
                                 );
                                 if i < wallets.len() - 1 {
-                                    println!();
+                                    log_print!();
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        println!("{}", format!("❌ Failed to view wallets: {}", e).red());
+                        log_error!("{}", format!("❌ Failed to view wallets: {}", e).red());
                         return Err(e);
                     }
                 }
@@ -157,11 +156,11 @@ pub async fn handle_wallet_command(
                 // Show specific wallet details
                 match wallet_manager.get_wallet(&wallet_name, None) {
                     Ok(Some(wallet_info)) => {
-                        println!("Wallet Details:\n");
-                        println!("Name: {}", wallet_info.name.bright_green());
-                        println!("Address: {}", wallet_info.address.bright_cyan());
-                        println!("Key Type: {}", wallet_info.key_type.bright_yellow());
-                        println!(
+                        log_print!("Wallet Details:\n");
+                        log_print!("Name: {}", wallet_info.name.bright_green());
+                        log_print!("Address: {}", wallet_info.address.bright_cyan());
+                        log_print!("Key Type: {}", wallet_info.key_type.bright_yellow());
+                        log_print!(
                             "Created: {}",
                             wallet_info
                                 .created_at
@@ -171,7 +170,7 @@ pub async fn handle_wallet_command(
                         );
 
                         if wallet_info.address.contains("[") {
-                            println!(
+                            log_print!(
                                 "\n{}",
                                 "💡 To see the full address, use the export command with password"
                                     .dimmed()
@@ -179,39 +178,39 @@ pub async fn handle_wallet_command(
                         }
                     }
                     Ok(None) => {
-                        println!("{}", format!("❌ Wallet '{}' not found", wallet_name).red());
-                        println!(
+                        log_error!("{}", format!("❌ Wallet '{}' not found", wallet_name).red());
+                        log_print!(
                             "Use {} to see available wallets",
                             "quantus wallet list".bright_green()
                         );
                     }
                     Err(e) => {
-                        println!("{}", format!("❌ Failed to view wallet: {}", e).red());
+                        log_error!("{}", format!("❌ Failed to view wallet: {}", e).red());
                         return Err(e);
                     }
                 }
             } else {
-                println!(
+                log_print!(
                     "{}",
                     "Please specify a wallet name with --name or use --all to show all wallets"
                         .yellow()
                 );
-                println!("Examples:");
-                println!(
+                log_print!("Examples:");
+                log_print!(
                     "  {}",
                     "quantus wallet view --name my-wallet".bright_green()
                 );
-                println!("  {}", "quantus wallet view --all".bright_green());
+                log_print!("  {}", "quantus wallet view --all".bright_green());
             }
 
             Ok(())
         }
 
         WalletCommands::Export { name, format } => {
-            println!("{}", "📤 Exporting wallet...".bright_blue().bold());
-            println!("Wallet: {}", name.bright_green());
-            println!("Format: {}", format.bright_yellow());
-            println!("{}", "✅ Export completed! (STUB)".green());
+            log_print!("📤 Exporting wallet...");
+            log_print!("Wallet: {}", name.bright_green());
+            log_print!("Format: {}", format.bright_yellow());
+            log_print!("{}", "✅ Export completed! (STUB)".green());
             Ok(())
         }
 
@@ -220,7 +219,7 @@ pub async fn handle_wallet_command(
             mnemonic,
             password,
         } => {
-            println!("{}", "📥 Importing wallet...".bright_blue().bold());
+            log_print!("📥 Importing wallet...");
 
             let wallet_manager = WalletManager::new()?;
 
@@ -228,7 +227,7 @@ pub async fn handle_wallet_command(
             let mnemonic_phrase = if let Some(mnemonic) = mnemonic {
                 mnemonic
             } else {
-                println!("Please enter your 24-word mnemonic phrase:");
+                log_print!("Please enter your 24-word mnemonic phrase:");
                 // For now, we'll require the mnemonic to be provided via command line
                 // In a real implementation, you'd want to prompt securely for this
                 return Err(crate::error::QuantusError::Generic(
@@ -243,10 +242,10 @@ pub async fn handle_wallet_command(
                 .await
             {
                 Ok(wallet_info) => {
-                    println!("Wallet name: {}", name.bright_green());
-                    println!("Address: {}", wallet_info.address.bright_cyan());
-                    println!("Key type: {}", wallet_info.key_type.bright_yellow());
-                    println!(
+                    log_success!("Wallet name: {}", name.bright_green());
+                    log_success!("Address: {}", wallet_info.address.bright_cyan());
+                    log_success!("Key type: {}", wallet_info.key_type.bright_yellow());
+                    log_success!(
                         "Imported: {}",
                         wallet_info
                             .created_at
@@ -254,10 +253,10 @@ pub async fn handle_wallet_command(
                             .to_string()
                             .dimmed()
                     );
-                    println!("{}", "✅ Wallet imported successfully!".green());
+                    log_success!("✅ Wallet imported successfully!");
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to import wallet: {}", e).red());
+                    log_error!("{}", format!("❌ Failed to import wallet: {}", e).red());
                     return Err(e);
                 }
             }
@@ -266,30 +265,30 @@ pub async fn handle_wallet_command(
         }
 
         WalletCommands::List => {
-            println!("{}", "📋 Listing all wallets...".bright_blue().bold());
+            log_print!("📋 Listing all wallets...");
 
             let wallet_manager = WalletManager::new()?;
 
             match wallet_manager.list_wallets() {
                 Ok(wallets) => {
                     if wallets.is_empty() {
-                        println!("{}", "No wallets found.".dimmed());
-                        println!(
+                        log_print!("{}", "No wallets found.".dimmed());
+                        log_print!(
                             "Create a new wallet with: {}",
                             "quantus wallet create --name <name>".bright_green()
                         );
                     } else {
-                        println!("Found {} wallet(s):\n", wallets.len());
+                        log_print!("Found {} wallet(s):\n", wallets.len());
 
                         for (i, wallet) in wallets.iter().enumerate() {
-                            println!(
+                            log_print!(
                                 "{}. {}",
                                 (i + 1).to_string().bright_yellow(),
                                 wallet.name.bright_green()
                             );
-                            println!("   Address: {}", wallet.address.bright_cyan());
-                            println!("   Type: {}", wallet.key_type.bright_yellow());
-                            println!(
+                            log_print!("   Address: {}", wallet.address.bright_cyan());
+                            log_print!("   Type: {}", wallet.key_type.bright_yellow());
+                            log_print!(
                                 "   Created: {}",
                                 wallet
                                     .created_at
@@ -298,11 +297,11 @@ pub async fn handle_wallet_command(
                                     .dimmed()
                             );
                             if i < wallets.len() - 1 {
-                                println!();
+                                log_print!();
                             }
                         }
 
-                        println!(
+                        log_print!(
                             "\n{}",
                             "💡 Use 'quantus wallet view --name <wallet>' to see full details"
                                 .dimmed()
@@ -310,7 +309,7 @@ pub async fn handle_wallet_command(
                     }
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to list wallets: {}", e).red());
+                    log_error!("{}", format!("❌ Failed to list wallets: {}", e).red());
                     return Err(e);
                 }
             }
@@ -319,13 +318,13 @@ pub async fn handle_wallet_command(
         }
 
         WalletCommands::Delete { name, force } => {
-            println!("{}", "🗑️  Deleting wallet...".bright_red().bold());
-            println!("Wallet: {}", name.bright_green());
-            println!(
+            log_print!("🗑️  Deleting wallet...");
+            log_print!("Wallet: {}", name.bright_green());
+            log_print!(
                 "Force: {}",
                 if force { "Yes" } else { "No" }.bright_yellow()
             );
-            println!("{}", "✅ Wallet deleted! (STUB)".green());
+            log_print!("{}", "✅ Wallet deleted! (STUB)".green());
             Ok(())
         }
     }
