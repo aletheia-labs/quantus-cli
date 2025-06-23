@@ -275,6 +275,7 @@ mod tests {
     use super::*;
     use dilithium_crypto::{crystal_alice, crystal_charlie, dilithium_bob};
     use rusty_crystals_dilithium::ml_dsa_87::Keypair;
+    use tempfile::TempDir;
 
     #[test]
     fn test_quantum_keypair_from_dilithium_keypair() {
@@ -527,6 +528,181 @@ mod tests {
                 "Should panic on invalid address: {}",
                 invalid_addr
             );
+        }
+    }
+
+    #[test]
+    fn test_stored_wallet_address_generation() {
+        // This test reproduces the error that occurs when loading a wallet from disk
+        // and trying to generate its address - simulating the real-world scenario
+
+        // Create a test wallet like the developer wallets
+        let alice_pair = crystal_alice();
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&alice_pair);
+
+        // Create wallet data like what gets stored
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("version".to_string(), "1.0.0".to_string());
+        metadata.insert("algorithm".to_string(), "ML-DSA-87".to_string());
+        metadata.insert("test_wallet".to_string(), "true".to_string());
+
+        let wallet_data = WalletData {
+            name: "test_crystal_alice".to_string(),
+            keypair: quantum_keypair.clone(),
+            mnemonic: None,
+            metadata,
+        };
+
+        // Test that we can generate address from the stored keypair
+        let result = std::panic::catch_unwind(|| wallet_data.keypair.to_account_id_ss58check());
+
+        match result {
+            Ok(address) => {
+                println!("✅ Address generation successful: {}", address);
+                // Verify it matches the expected address
+                let expected = alice_pair.public().into_account().to_ss58check();
+                assert_eq!(
+                    address, expected,
+                    "Stored wallet should generate correct address"
+                );
+            }
+            Err(_) => {
+                panic!("❌ Address generation failed - this is the bug we need to fix!");
+            }
+        }
+    }
+
+    #[test]
+    fn test_encrypted_wallet_address_generation() {
+        // This test simulates the full encryption/decryption cycle that happens
+        // when creating a developer wallet and then trying to use it for sending
+
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
+        let keystore = Keystore::new(temp_dir.path());
+
+        // Create a developer wallet like crystal_alice
+        let alice_pair = crystal_alice();
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&alice_pair);
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("version".to_string(), "1.0.0".to_string());
+        metadata.insert("algorithm".to_string(), "ML-DSA-87".to_string());
+        metadata.insert("test_wallet".to_string(), "true".to_string());
+
+        let wallet_data = WalletData {
+            name: "test_crystal_alice".to_string(),
+            keypair: quantum_keypair,
+            mnemonic: None,
+            metadata,
+        };
+
+        // Encrypt the wallet (like developer wallets use empty password)
+        let encrypted_wallet = keystore
+            .encrypt_wallet_data(&wallet_data, "")
+            .expect("Encryption should succeed");
+
+        // Save and reload the wallet
+        keystore
+            .save_wallet(&encrypted_wallet)
+            .expect("Save should succeed");
+        let loaded_wallet = keystore
+            .load_wallet("test_crystal_alice")
+            .expect("Load should succeed")
+            .expect("Wallet should exist");
+
+        // Decrypt the wallet (this is where the send command would decrypt it)
+        let decrypted_data = keystore
+            .decrypt_wallet_data(&loaded_wallet, "")
+            .expect("Decryption should succeed");
+
+        // Test that we can generate address from the decrypted keypair
+        let result = std::panic::catch_unwind(|| decrypted_data.keypair.to_account_id_ss58check());
+
+        match result {
+            Ok(address) => {
+                println!(
+                    "✅ Encrypted wallet address generation successful: {}",
+                    address
+                );
+                // Verify it matches the expected address
+                let expected = alice_pair.public().into_account().to_ss58check();
+                assert_eq!(
+                    address, expected,
+                    "Decrypted wallet should generate correct address"
+                );
+            }
+            Err(_) => {
+                panic!("❌ Encrypted wallet address generation failed - this reproduces the send command bug!");
+            }
+        }
+    }
+
+    #[test]
+    fn test_send_command_wallet_loading_flow() {
+        // This test reproduces the exact bug in the send command
+        // The send command calls wallet_manager.load_wallet() which returns dummy data
+        // then tries to generate an address from that dummy data, causing the panic
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let keystore = Keystore::new(temp_dir.path());
+
+        // Create and save a developer wallet like crystal_alice
+        let alice_pair = crystal_alice();
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&alice_pair);
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("version".to_string(), "1.0.0".to_string());
+        metadata.insert("algorithm".to_string(), "ML-DSA-87".to_string());
+        metadata.insert("test_wallet".to_string(), "true".to_string());
+
+        let wallet_data = WalletData {
+            name: "crystal_alice".to_string(),
+            keypair: quantum_keypair,
+            mnemonic: None,
+            metadata,
+        };
+
+        // Encrypt and save the wallet (like developer wallets use empty password)
+        let encrypted_wallet = keystore
+            .encrypt_wallet_data(&wallet_data, "")
+            .expect("Encryption should succeed");
+        keystore
+            .save_wallet(&encrypted_wallet)
+            .expect("Save should succeed");
+
+        // Now simulate what the send command does:
+        // 1. Create a WalletManager and load the wallet with password
+        use crate::wallet::WalletManager;
+        let wallet_manager = WalletManager {
+            wallets_dir: temp_dir.path().to_path_buf(),
+        };
+        let loaded_wallet_data = wallet_manager
+            .load_wallet("crystal_alice", "")
+            .expect("Should load wallet");
+
+        // 2. Try to generate address from the loaded keypair (should work now)
+        let result = std::panic::catch_unwind(|| {
+            // The keypair is already decrypted, so we can use it directly
+            loaded_wallet_data.keypair.to_account_id_ss58check()
+        });
+
+        match result {
+            Ok(address) => {
+                println!("✅ Send command flow works: {}", address);
+                // If this passes, the bug is fixed
+                let expected = alice_pair.public().into_account().to_ss58check();
+                assert_eq!(
+                    address, expected,
+                    "Loaded wallet should generate correct address"
+                );
+            }
+            Err(_) => {
+                println!("❌ Send command flow failed - this reproduces the bug!");
+                // This test should fail initially, proving we found the bug
+                panic!(
+                    "This test reproduces the send command bug - load_wallet returns dummy data!"
+                );
+            }
         }
     }
 

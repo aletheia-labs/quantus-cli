@@ -249,29 +249,17 @@ impl WalletManager {
         }
     }
 
-    /// Load a wallet from disk (returns encrypted wallet data)
-    pub fn load_wallet(&self, name: &str) -> Result<WalletData> {
+    /// Load a wallet from disk and decrypt it with the provided password
+    pub fn load_wallet(&self, name: &str, password: &str) -> Result<WalletData> {
         let keystore = Keystore::new(&self.wallets_dir);
 
         // Load the encrypted wallet
         let encrypted_wallet = keystore.load_wallet(name)?.ok_or(WalletError::NotFound)?;
 
-        // For now, return a placeholder - in real usage, we'd need password to decrypt
-        // This is just to satisfy the compile-time interface
-        // In a real implementation, this method should require a password parameter
+        // Decrypt the wallet data using the provided password
+        let wallet_data = keystore.decrypt_wallet_data(&encrypted_wallet, password)?;
 
-        // Create a dummy wallet data for compilation - this should be fixed
-        let dummy_keypair = QuantumKeyPair {
-            public_key: vec![0u8; 1952],  // ML-DSA-87 public key size
-            private_key: vec![0u8; 4896], // ML-DSA-87 private key size
-        };
-
-        Ok(WalletData {
-            name: encrypted_wallet.name,
-            keypair: dummy_keypair,
-            mnemonic: None,
-            metadata: std::collections::HashMap::new(),
-        })
+        Ok(wallet_data)
     }
 }
 

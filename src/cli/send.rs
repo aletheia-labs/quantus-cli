@@ -20,17 +20,17 @@ pub async fn handle_send_command(
         to_address.bright_green()
     );
 
-    // Load the sender wallet
+    // Get password securely for decryption
+    let password = get_password_from_user(&format!("Enter password for wallet '{}'", from_wallet))?;
+
+    // Load and decrypt the sender wallet
     let wallet_manager = WalletManager::new()?;
-    let wallet_data = wallet_manager.load_wallet(&from_wallet)?;
+    let wallet_data = wallet_manager.load_wallet(&from_wallet, &password)?;
 
     log_verbose!("📦 Using wallet: {}", from_wallet.bright_blue().bold());
 
-    // TODO: Get password securely for decryption
-    let password = get_password_from_user(&format!("Enter password for wallet '{}'", from_wallet))?;
-
-    // Decrypt the key pair
-    let keypair = wallet_data.decrypt_keypair(&password)?;
+    // Get the keypair (already decrypted)
+    let keypair = &wallet_data.keypair;
 
     // Create chain client
     let chain_client = ChainClient::new(node_url).await?;
