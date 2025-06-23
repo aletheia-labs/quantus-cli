@@ -7,6 +7,7 @@ use crate::{
 use colored::Colorize;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
+use tokio::time;
 
 /// Simple progress spinner for showing waiting status
 struct ProgressSpinner {
@@ -95,17 +96,32 @@ pub async fn handle_send_command(
         "SIGN".bright_magenta().bold()
     );
 
+    // Show spinner during the potentially slow network submission
+    let mut spinner = ProgressSpinner::new();
+
+    // Create a task that shows the spinner while waiting for network
+    let spinner_handle = tokio::spawn(async move {
+        let wait_duration = Duration::from_millis(200);
+        loop {
+            spinner.tick();
+            time::sleep(wait_duration).await;
+        }
+    });
+
+    // Submit transaction (this is where it might hang/take long)
     let tx_hash = chain_client.transfer(&keypair, &to_address, amount).await?;
+
+    // Stop the spinner and clear the line
+    spinner_handle.abort();
+    print!("\r                                                    \r"); // Clear spinner line
+    io::stdout().flush().unwrap();
 
     log_print!(
         "✅ {} Transaction submitted!",
         "SUCCESS".bright_green().bold()
     );
     log_print!("📍 Transaction hash: {}", tx_hash.bright_blue());
-    log_verbose!("🔗 Waiting for confirmation...");
 
-    // Wait for transaction confirmation
-    let spinner = ProgressSpinner::new();
     let success = chain_client.wait_for_finalization(&tx_hash).await?;
 
     if success {
