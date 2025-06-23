@@ -273,6 +273,185 @@ impl ChainClient {
         Ok((token_symbol, token_decimals))
     }
 
+    /// Get chain metadata and explore all available pallets and calls
+    pub async fn explore_chain_metadata(&self, no_docs: bool) -> Result<()> {
+        log_verbose!("🔍 Exploring chain metadata...");
+
+        // Get the metadata from the API (it's already loaded)
+        let metadata = self.api.metadata();
+
+        log_print!("🏗️  Chain Metadata Information:");
+
+        // Get pallets from metadata
+        let pallets: Vec<_> = metadata.pallets().collect();
+        log_print!("📦 Found {} pallets:\n", pallets.len());
+
+        for (i, pallet) in pallets.iter().enumerate() {
+            log_print!(
+                "{}. {} (Index: {})",
+                (i + 1).to_string().bright_yellow(),
+                pallet.name().bright_green(),
+                pallet.index().to_string().bright_cyan()
+            );
+
+            // Show available calls for this pallet
+            if let Some(call_variants) = pallet.call_variants() {
+                log_print!(
+                    "   📞 Calls ({}):",
+                    call_variants.len().to_string().bright_blue()
+                );
+
+                for (j, call) in call_variants.iter().enumerate().take(5) {
+                    log_print!(
+                        "      {}. {}",
+                        (j + 1).to_string().bright_white(),
+                        call.name.bright_green()
+                    );
+
+                    // Show call documentation (unless --no-docs flag is used)
+                    if !no_docs {
+                        let docs = call.docs.clone();
+                        if !docs.is_empty() {
+                            log_print!("         📝 {}", docs.join(" ").dimmed());
+                        }
+                    }
+
+                    // Show call parameters
+                    let fields: Vec<_> = call.fields.clone();
+                    if !fields.is_empty() {
+                        log_print!("         📥 Parameters:");
+                        for field in fields.iter() {
+                            let field_name = field.name.clone().unwrap_or("<unnamed>".to_string());
+
+                            // Try to get a readable type name
+                            let type_info = if let Some(type_name) = &field.type_name {
+                                type_name.clone()
+                            } else {
+                                // Try to resolve type from metadata registry
+                                match metadata.types().resolve(field.ty.id()) {
+                                    Some(type_def) => {
+                                        // Try to get a human-readable type name
+                                        match type_def.type_def() {
+                                            scale_info::TypeDef::Primitive(primitive) => {
+                                                format!("{:?}", primitive)
+                                            }
+                                            scale_info::TypeDef::Compact(compact) => {
+                                                format!(
+                                                    "Compact<Type #{}>",
+                                                    compact.type_param().id()
+                                                )
+                                            }
+                                            scale_info::TypeDef::Sequence(seq) => {
+                                                format!("Vec<Type #{}>", seq.type_param().id())
+                                            }
+                                            scale_info::TypeDef::Array(arr) => {
+                                                format!(
+                                                    "[Type #{}; {}]",
+                                                    arr.type_param().id(),
+                                                    arr.len()
+                                                )
+                                            }
+                                            scale_info::TypeDef::Tuple(tuple) => {
+                                                if tuple.fields().is_empty() {
+                                                    "()".to_string()
+                                                } else {
+                                                    format!(
+                                                        "Tuple with {} fields",
+                                                        tuple.fields().len()
+                                                    )
+                                                }
+                                            }
+                                            scale_info::TypeDef::Composite(composite) => {
+                                                if let Some(path) =
+                                                    type_def.path().segments().last()
+                                                {
+                                                    path.clone()
+                                                } else {
+                                                    format!(
+                                                        "Composite<{} fields>",
+                                                        composite.fields().len()
+                                                    )
+                                                }
+                                            }
+                                            scale_info::TypeDef::Variant(variant) => {
+                                                if let Some(path) =
+                                                    type_def.path().segments().last()
+                                                {
+                                                    path.clone()
+                                                } else {
+                                                    format!(
+                                                        "Enum<{} variants>",
+                                                        variant.variants().len()
+                                                    )
+                                                }
+                                            }
+                                            scale_info::TypeDef::BitSequence(_) => {
+                                                "BitVec".to_string()
+                                            }
+                                        }
+                                    }
+                                    None => format!("Type #{}", field.ty.id()),
+                                }
+                            };
+
+                            log_print!(
+                                "           • {}: {}",
+                                field_name.bright_cyan(),
+                                type_info.dimmed()
+                            );
+                        }
+                    } else {
+                        log_print!("         📥 No parameters");
+                    }
+                }
+            } else {
+                log_print!("   📞 No calls available");
+            }
+
+            // Show storage items
+            let storage_entries: Vec<_> = pallet.storage().collect();
+            if !storage_entries.is_empty() {
+                log_print!(
+                    "   💾 Storage ({}):",
+                    storage_entries.len().to_string().bright_magenta()
+                );
+
+                for (j, entry) in storage_entries.iter().enumerate() {
+                    log_print!(
+                        "      {}. {}",
+                        (j + 1).to_string().bright_white(),
+                        entry.name.clone().bright_magenta()
+                    );
+                }
+            }
+
+            // Show events
+            if let Some(event_variants) = pallet.event_variants() {
+                log_print!(
+                    "   📡 Events ({}):",
+                    event_variants.len().to_string().bright_red()
+                );
+
+                for (j, event) in event_variants.iter().enumerate() {
+                    log_print!(
+                        "      {}. {}",
+                        (j + 1).to_string().bright_white(),
+                        event.name.bright_red()
+                    );
+                }
+            }
+
+            if i < pallets.len() - 1 {
+                log_print!();
+            }
+        }
+
+        log_print!("\n💡 Use this information to implement new extrinsic calls!");
+        log_print!("💡 Each call can be submitted using the submit_extrinsic! macro");
+
+        Ok(())
+    }
+
     /// Format balance with proper decimals
     pub fn format_balance(amount: u128, decimals: u8) -> String {
         if decimals == 0 {

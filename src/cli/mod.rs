@@ -48,6 +48,13 @@ pub enum Commands {
     /// Query system information
     System,
 
+    /// Explore chain metadata and available pallets/calls
+    Metadata {
+        /// Skip displaying documentation for calls
+        #[arg(long)]
+        no_docs: bool,
+    },
+
     /// Show version information
     Version,
 }
@@ -73,6 +80,7 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
         Commands::Balance { address } => handle_balance_command(address, node_url).await,
         Commands::Developer(dev_cmd) => handle_developer_command(dev_cmd, node_url).await,
         Commands::System => handle_system_command(node_url).await,
+        Commands::Metadata { no_docs } => handle_metadata_command(node_url, no_docs).await,
         Commands::Version => {
             log_print!("Quantus CLI v{}", env!("CARGO_PKG_VERSION"));
             log_print!("Build: {}", env!("CARGO_PKG_DESCRIPTION"));
@@ -120,6 +128,25 @@ async fn handle_system_command(node_url: &str) -> crate::error::Result<()> {
 
     // Query system info
     client.get_system_info().await?;
+
+    Ok(())
+}
+
+/// Handle the metadata exploration command
+async fn handle_metadata_command(node_url: &str, no_docs: bool) -> crate::error::Result<()> {
+    use crate::chain::client::ChainClient;
+    use colored::Colorize;
+
+    log_verbose!(
+        "🔍 {} Exploring chain metadata",
+        "METADATA".bright_cyan().bold()
+    );
+
+    // Create chain client
+    let client = ChainClient::new(node_url).await?;
+
+    // Explore chain metadata
+    client.explore_chain_metadata(no_docs).await?;
 
     Ok(())
 }
