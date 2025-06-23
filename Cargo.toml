@@ -12,6 +12,13 @@ name = "quantus"
 path = "src/main.rs"
 
 [dependencies]
+# Quantus
+rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-dilithium" }
+rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-hdwallet" }
+rust_lib_resonance_network_wallet = { git = "https://github.com/Quantus-Network/resonance-mobile-app", package = "rust_lib_resonance_network_wallet" }
+poseidon-resonance = { version = "0.6.0", git = "https://github.com/Quantus-Network/poseidon-resonance" }
+sp-core = "35.0.0"
+
 # CLI and async runtime
 clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1.24", features = ["rt-multi-thread", "macros", "time"] }
@@ -20,11 +27,6 @@ tokio = { version = "1.24", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
-
-# Crypto and wallet
-bip39 = "2.0"
-hex = "0.4"
-rand = "0.8"
 
 # Logging and error handling
 anyhow = "1.0"
@@ -39,6 +41,9 @@ console = "0.15"
 # Additional utilities
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.8"
 
 # Note: Substrate/Polkadot and Quantus-specific dependencies will be added later
 # once we confirm the exact paths and versions needed

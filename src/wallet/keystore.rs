@@ -5,9 +5,58 @@
 /// - Loading and decrypting wallet data
 /// - Managing wallet files on disk
 use crate::error::Result;
-use crate::wallet::crypto::QuantumKeyPair;
+use poseidon_resonance::PoseidonHasher;
+use rusty_crystals_dilithium::ml_dsa_87::{Keypair, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
+use sp_core::crypto::{AccountId32, Ss58Codec};
+use sp_core::Hasher;
+
 use std::path::Path;
+
+/// Local quantum-safe key pair for serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantumKeyPair {
+    pub public_key: Vec<u8>,
+    pub private_key: Vec<u8>,
+}
+
+impl QuantumKeyPair {
+    /// Create from rusty-crystals Keypair
+    pub fn from_dilithium_keypair(keypair: &Keypair) -> Self {
+        Self {
+            public_key: keypair.public.to_bytes().to_vec(),
+            private_key: keypair.secret.to_bytes().to_vec(),
+        }
+    }
+
+    /// Convert to rusty-crystals Keypair
+    pub fn to_dilithium_keypair(&self) -> Result<Keypair> {
+        // TODO: Implement conversion from bytes back to Keypair
+        // For now, generate a new one as placeholder
+        Ok(Keypair {
+            public: PublicKey::from_bytes(&self.public_key).expect("Failed to parse public key"),
+            secret: SecretKey::from_bytes(&self.private_key).expect("Failed to parse private key"),
+        })
+    }
+
+    pub fn to_account_id_32(&self) -> AccountId32 {
+        let hashed = <PoseidonHasher as Hasher>::hash(self.public_key.as_slice());
+        let account = AccountId32::from(hashed.0);
+        account
+    }
+
+    pub fn to_account_id_ss58check(&self) -> String {
+        let account = self.to_account_id_32();
+        let result = account.to_ss58check();
+        result
+    }
+
+    pub fn ss58_to_account_id(s: &str) -> Vec<u8> {
+        // from_ss58check returns a Result, we unwrap it to panic on invalid input.
+        // We then convert the AccountId32 struct to a Vec<u8> to be compatible with Polkadart's typedef.
+        AsRef::<[u8]>::as_ref(&AccountId32::from_ss58check(s).unwrap()).to_vec()
+    }
+}
 
 /// Encrypted wallet data structure
 #[derive(Debug, Serialize, Deserialize)]

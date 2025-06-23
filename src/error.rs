@@ -59,6 +59,9 @@ pub enum WalletError {
 
     #[error("Decryption failed")]
     Decryption,
+
+    #[error("Invalid key format: {0}")]
+    InvalidKeyFormat(String),
 }
 
 /// Chain interaction errors

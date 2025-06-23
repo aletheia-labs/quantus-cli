@@ -1,3 +1,4 @@
+use crate::wallet::WalletManager;
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -79,15 +80,32 @@ pub async fn handle_wallet_command(
                 "🔐 Creating new quantum wallet...".bright_blue().bold()
             );
 
-            // TODO: Implement wallet creation
-            println!("Wallet name: {}", name.bright_green());
-            if password.is_some() {
-                println!("Password: {}", "[PROVIDED]".dimmed());
-            } else {
-                println!("Password: {}", "[WILL PROMPT]".dimmed());
+            let wallet_manager = WalletManager::new()?;
+
+            match wallet_manager
+                .create_wallet(&name, password.as_deref())
+                .await
+            {
+                Ok(wallet_info) => {
+                    println!("Wallet name: {}", name.bright_green());
+                    println!("Address: {}", wallet_info.address.bright_cyan());
+                    println!("Key type: {}", wallet_info.key_type.bright_yellow());
+                    println!(
+                        "Created: {}",
+                        wallet_info
+                            .created_at
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                            .dimmed()
+                    );
+                    println!("{}", "✅ Wallet created successfully!".green());
+                }
+                Err(e) => {
+                    println!("{}", format!("❌ Failed to create wallet: {}", e).red());
+                    return Err(e);
+                }
             }
 
-            println!("{}", "✅ Wallet created successfully! (STUB)".green());
             Ok(())
         }
 
