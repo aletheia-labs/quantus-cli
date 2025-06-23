@@ -11,6 +11,8 @@ use crate::error::{Result, WalletError};
 pub use keystore::{Keystore, QuantumKeyPair, WalletData};
 use rusty_crystals_hdwallet::{generate_mnemonic, HDLattice};
 use serde::{Deserialize, Serialize};
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::traits::IdentifyAccount;
 /// Wallet information structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletInfo {
@@ -82,6 +84,58 @@ impl WalletManager {
         })
     }
 
+    /// Create a new developer wallet
+    pub async fn create_developer_wallet(&self, name: &str) -> Result<WalletInfo> {
+        // Check if wallet already exists
+        let keystore = Keystore::new(&self.wallets_dir);
+
+        // Generate the appropriate test keypair
+        let resonance_pair = match name {
+            "crystal_alice" => dilithium_crypto::crystal_alice(),
+            "crystal_bob" => dilithium_crypto::dilithium_bob(),
+            "crystal_charlie" => dilithium_crypto::crystal_charlie(),
+            _ => return Err(WalletError::KeyGeneration.into()),
+        };
+
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&resonance_pair);
+
+        println!(
+            "🔑 Resonance pair: {:?}",
+            resonance_pair.public().into_account().to_ss58check()
+        );
+        println!(
+            "🔑 Quantum keypair: {:?}",
+            quantum_keypair.to_account_id_ss58check()
+        );
+
+        // Create wallet data
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("version".to_string(), "1.0.0".to_string());
+        metadata.insert("algorithm".to_string(), "ML-DSA-87".to_string());
+        metadata.insert("test_wallet".to_string(), "true".to_string());
+
+        // Generate address from public key
+        let address = quantum_keypair.to_account_id_ss58check();
+
+        let wallet_data = WalletData {
+            name: name.to_string(),
+            keypair: quantum_keypair,
+            mnemonic: None, // Test wallets don't have mnemonics
+            metadata,
+        };
+
+        // Encrypt and save the wallet with empty password for test wallets
+        let encrypted_wallet = keystore.encrypt_wallet_data(&wallet_data, "")?;
+        keystore.save_wallet(&encrypted_wallet)?;
+
+        Ok(WalletInfo {
+            name: name.to_string(),
+            address,
+            created_at: encrypted_wallet.created_at,
+            key_type: "Dilithium ML-DSA-87".to_string(),
+        })
+    }
+
     /// List all wallets
     pub fn list_wallets(&self) -> Result<Vec<WalletInfo>> {
         let keystore = Keystore::new(&self.wallets_dir);
@@ -90,11 +144,10 @@ impl WalletManager {
         let mut wallets = Vec::new();
         for name in wallet_names {
             if let Some(encrypted_wallet) = keystore.load_wallet(&name)? {
-                // Create basic wallet info from encrypted wallet metadata
-                // Note: We can't decrypt without password, so we show limited info
+                // Create wallet info using stored public address
                 let wallet_info = WalletInfo {
                     name: encrypted_wallet.name,
-                    address: "[Encrypted - Use 'view' command]".to_string(),
+                    address: encrypted_wallet.address, // Address is stored unencrypted
                     created_at: encrypted_wallet.created_at,
                     key_type: "Dilithium ML-DSA-87".to_string(),
                 };
@@ -183,10 +236,10 @@ impl WalletManager {
                     }
                 }
             } else {
-                // No password provided, return basic info
+                // No password provided, return basic info with public address
                 Ok(Some(WalletInfo {
                     name: encrypted_wallet.name,
-                    address: "[Password required]".to_string(),
+                    address: encrypted_wallet.address, // Address is public
                     created_at: encrypted_wallet.created_at,
                     key_type: "Dilithium ML-DSA-87".to_string(),
                 }))
@@ -196,29 +249,17 @@ impl WalletManager {
         }
     }
 
-    /// Load a wallet from disk (returns encrypted wallet data)
-    pub fn load_wallet(&self, name: &str) -> Result<WalletData> {
+    /// Load a wallet from disk and decrypt it with the provided password
+    pub fn load_wallet(&self, name: &str, password: &str) -> Result<WalletData> {
         let keystore = Keystore::new(&self.wallets_dir);
 
         // Load the encrypted wallet
         let encrypted_wallet = keystore.load_wallet(name)?.ok_or(WalletError::NotFound)?;
 
-        // For now, return a placeholder - in real usage, we'd need password to decrypt
-        // This is just to satisfy the compile-time interface
-        // In a real implementation, this method should require a password parameter
+        // Decrypt the wallet data using the provided password
+        let wallet_data = keystore.decrypt_wallet_data(&encrypted_wallet, password)?;
 
-        // Create a dummy wallet data for compilation - this should be fixed
-        let dummy_keypair = QuantumKeyPair {
-            public_key: vec![0u8; 1952],  // ML-DSA-87 public key size
-            private_key: vec![0u8; 4896], // ML-DSA-87 private key size
-        };
-
-        Ok(WalletData {
-            name: encrypted_wallet.name,
-            keypair: dummy_keypair,
-            mnemonic: None,
-            metadata: std::collections::HashMap::new(),
-        })
+        Ok(wallet_data)
     }
 }
 
