@@ -37,6 +37,9 @@ quantus wallet view --name my-wallet
 quantus wallet export --name my-wallet --format mnemonic
 quantus wallet import --name imported-wallet --mnemonic "word1 word2 ..."
 
+# Cool dev stuff
+quantus developer create-test-wallets --verbose
+
 # Show version
 quantus version
 ```

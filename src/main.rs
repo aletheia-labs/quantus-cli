@@ -44,17 +44,6 @@ async fn main() -> Result<(), QuantusError> {
     // Set up our custom logging
     log::set_verbose(cli.verbose);
 
-    // Initialize standard logging
-    if cli.verbose {
-        env_logger::Builder::from_default_env()
-            .filter_level(::log::LevelFilter::Debug)
-            .init();
-    } else {
-        env_logger::Builder::from_default_env()
-            .filter_level(::log::LevelFilter::Info)
-            .init();
-    }
-
     // Print welcome message
     log_print!("{}", "🔮 Quantus CLI".bright_cyan().bold());
     log_verbose!("{}", "Connecting to the quantum future...".dimmed());

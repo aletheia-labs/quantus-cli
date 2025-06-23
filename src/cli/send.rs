@@ -88,12 +88,13 @@ pub async fn handle_send_command(
     Ok(())
 }
 
-/// Get password from user (placeholder - should use secure input)
+/// Get password from user securely
 fn get_password_from_user(prompt: &str) -> Result<String> {
     log_print!("{}", prompt.bright_yellow());
-    // TODO: Use secure password input (rpassword crate)
-    // For now, using placeholder
-    Ok("password123".to_string())
+    let password = rpassword::read_password().map_err(|e| {
+        crate::error::QuantusError::Generic(format!("Failed to read password: {}", e))
+    })?;
+    Ok(password)
 }
 
 // Send functionality implementation complete

@@ -9,7 +9,7 @@ use poseidon_resonance::PoseidonHasher;
 use rusty_crystals_dilithium::ml_dsa_87::{Keypair, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sp_core::crypto::{AccountId32, Ss58Codec};
-use sp_core::Hasher;
+use sp_core::{ByteArray, Hasher};
 
 // Quantum-safe encryption imports
 use aes_gcm::{
@@ -22,7 +22,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use std::path::Path;
 
-/// Local quantum-safe key pair for serialization
+use chrono::{DateTime, Utc};
+use dilithium_crypto::types::{ResonancePair, ResonancePublic};
+use sp_runtime::traits::IdentifyAccount;
+
+/// Quantum-safe key pair using Dilithium post-quantum signatures
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantumKeyPair {
     pub public_key: Vec<u8>,
@@ -48,16 +52,33 @@ impl QuantumKeyPair {
         })
     }
 
+    /// Convert to ResonancePair for use with substrate-api-client
+    pub fn to_resonance_pair(&self) -> Result<ResonancePair> {
+        // Convert our QuantumKeyPair to ResonancePair using from_seed
+        // Use the private key as the seed
+        Ok(ResonancePair {
+            public: self.public_key.as_slice().try_into().unwrap(),
+            secret: self.private_key.as_slice().try_into().unwrap(),
+        })
+    }
+
+    pub fn from_resonance_pair(keypair: &ResonancePair) -> Self {
+        Self {
+            public_key: keypair.public.as_ref().to_vec(),
+            private_key: keypair.secret.as_ref().to_vec(),
+        }
+    }
+
     pub fn to_account_id_32(&self) -> AccountId32 {
-        let hashed = <PoseidonHasher as Hasher>::hash(self.public_key.as_slice());
-        let account = AccountId32::from(hashed.0);
-        account
+        // Use the ResonancePublic's into_account method for correct address generation
+        let resonance_public =
+            ResonancePublic::from_slice(&self.public_key).expect("Invalid public key");
+        resonance_public.into_account()
     }
 
     pub fn to_account_id_ss58check(&self) -> String {
         let account = self.to_account_id_32();
-        let result = account.to_ss58check();
-        result
+        account.to_ss58check()
     }
 
     pub fn ss58_to_account_id(s: &str) -> Vec<u8> {
@@ -71,6 +92,7 @@ impl QuantumKeyPair {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EncryptedWallet {
     pub name: String,
+    pub address: String, // SS58-encoded address (public, not encrypted)
     pub encrypted_data: Vec<u8>,
     pub kyber_ciphertext: Vec<u8>, // Reserved for future ML-KEM implementation
     pub kyber_public_key: Vec<u8>, // Reserved for future ML-KEM implementation
@@ -203,6 +225,7 @@ impl Keystore {
 
         Ok(EncryptedWallet {
             name: data.name.clone(),
+            address: data.keypair.to_account_id_ss58check(), // Store public address
             encrypted_data,
             kyber_ciphertext: vec![], // Reserved for future ML-KEM implementation
             kyber_public_key: vec![], // Reserved for future ML-KEM implementation
