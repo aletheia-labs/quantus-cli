@@ -88,6 +88,54 @@ impl WalletManager {
         Ok(vec![])
     }
 
+    /// Import wallet from mnemonic phrase
+    pub async fn import_wallet(
+        &self,
+        name: &str,
+        mnemonic: &str,
+        password: Option<&str>,
+    ) -> Result<WalletInfo> {
+        // Check if wallet already exists
+        let keystore = Keystore::new(&self.wallets_dir);
+        if keystore.load_wallet(name)?.is_some() {
+            return Err(WalletError::AlreadyExists.into());
+        }
+
+        // Validate and import from mnemonic
+        let lattice =
+            HDLattice::from_mnemonic(mnemonic, None).map_err(|_| WalletError::InvalidMnemonic)?;
+        let dilithium_keypair = lattice.generate_keys();
+        let quantum_keypair = QuantumKeyPair::from_dilithium_keypair(&dilithium_keypair);
+
+        // Create wallet data
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("version".to_string(), "1.0.0".to_string());
+        metadata.insert("algorithm".to_string(), "ML-DSA-87".to_string());
+        metadata.insert("imported".to_string(), "true".to_string());
+
+        // Generate address from public key
+        let address = quantum_keypair.to_account_id_ss58check();
+
+        let wallet_data = WalletData {
+            name: name.to_string(),
+            keypair: quantum_keypair,
+            mnemonic: Some(mnemonic.to_string()),
+            metadata,
+        };
+
+        // Encrypt and save the wallet
+        let password = password.unwrap_or(""); // Use empty password if none provided
+        let encrypted_wallet = keystore.encrypt_wallet_data(&wallet_data, password)?;
+        keystore.save_wallet(&encrypted_wallet)?;
+
+        Ok(WalletInfo {
+            name: name.to_string(),
+            address,
+            created_at: encrypted_wallet.created_at,
+            key_type: "Dilithium ML-DSA-87".to_string(),
+        })
+    }
+
     /// Get wallet by name
     pub fn get_wallet(&self, name: &str) -> Result<Option<WalletInfo>> {
         // TODO: Implement wallet retrieval
@@ -326,5 +374,78 @@ mod tests {
         // Both should be valid SS58 addresses
         assert!(wallet1.address.starts_with("5"));
         assert!(wallet2.address.starts_with("5"));
+    }
+
+    #[tokio::test]
+    async fn test_wallet_import() {
+        let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
+
+        // Test mnemonic phrase (24 words)
+        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+        // Import wallet
+        let imported_wallet = wallet_manager
+            .import_wallet(
+                "imported-test-wallet",
+                test_mnemonic,
+                Some("import-password"),
+            )
+            .await
+            .expect("Failed to import wallet");
+
+        // Verify wallet info
+        assert_eq!(imported_wallet.name, "imported-test-wallet");
+        assert!(imported_wallet.address.starts_with("5"));
+        assert_eq!(imported_wallet.key_type, "Dilithium ML-DSA-87");
+
+        // Import the same mnemonic again should create the same address
+        let imported_wallet2 = wallet_manager
+            .import_wallet("imported-test-wallet-2", test_mnemonic, None)
+            .await
+            .expect("Failed to import wallet again");
+
+        assert_eq!(imported_wallet.address, imported_wallet2.address);
+    }
+
+    #[tokio::test]
+    async fn test_wallet_import_invalid_mnemonic() {
+        let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
+
+        // Test with invalid mnemonic
+        let invalid_mnemonic = "invalid mnemonic phrase that should not work";
+
+        let result = wallet_manager
+            .import_wallet("invalid-wallet", invalid_mnemonic, None)
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::error::QuantusError::Wallet(WalletError::InvalidMnemonic) => {}
+            _ => panic!("Expected InvalidMnemonic error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wallet_import_already_exists() {
+        let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
+
+        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+        // Import first wallet
+        wallet_manager
+            .import_wallet("duplicate-import-wallet", test_mnemonic, None)
+            .await
+            .expect("Failed to import first wallet");
+
+        // Try to import with same name
+        let result = wallet_manager
+            .import_wallet("duplicate-import-wallet", test_mnemonic, None)
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::error::QuantusError::Wallet(WalletError::AlreadyExists) => {}
+            _ => panic!("Expected AlreadyExists error"),
+        }
     }
 }

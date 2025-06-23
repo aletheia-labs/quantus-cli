@@ -140,21 +140,47 @@ pub async fn handle_wallet_command(
             password,
         } => {
             println!("{}", "📥 Importing wallet...".bright_blue().bold());
-            println!("Wallet name: {}", name.bright_green());
 
-            if mnemonic.is_some() {
-                println!("Mnemonic: {}", "[PROVIDED]".dimmed());
+            let wallet_manager = WalletManager::new()?;
+
+            // Get mnemonic from user if not provided
+            let mnemonic_phrase = if let Some(mnemonic) = mnemonic {
+                mnemonic
             } else {
-                println!("Mnemonic: {}", "[WILL PROMPT]".dimmed());
+                println!("Please enter your 24-word mnemonic phrase:");
+                // For now, we'll require the mnemonic to be provided via command line
+                // In a real implementation, you'd want to prompt securely for this
+                return Err(crate::error::QuantusError::Generic(
+                    "Mnemonic phrase is required. Please provide it with --mnemonic flag."
+                        .to_string(),
+                )
+                .into());
+            };
+
+            match wallet_manager
+                .import_wallet(&name, &mnemonic_phrase, password.as_deref())
+                .await
+            {
+                Ok(wallet_info) => {
+                    println!("Wallet name: {}", name.bright_green());
+                    println!("Address: {}", wallet_info.address.bright_cyan());
+                    println!("Key type: {}", wallet_info.key_type.bright_yellow());
+                    println!(
+                        "Imported: {}",
+                        wallet_info
+                            .created_at
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                            .dimmed()
+                    );
+                    println!("{}", "✅ Wallet imported successfully!".green());
+                }
+                Err(e) => {
+                    println!("{}", format!("❌ Failed to import wallet: {}", e).red());
+                    return Err(e);
+                }
             }
 
-            if password.is_some() {
-                println!("Password: {}", "[PROVIDED]".dimmed());
-            } else {
-                println!("Password: {}", "[WILL PROMPT]".dimmed());
-            }
-
-            println!("{}", "✅ Wallet imported successfully! (STUB)".green());
             Ok(())
         }
 
