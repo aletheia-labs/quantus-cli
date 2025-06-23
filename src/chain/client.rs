@@ -328,60 +328,52 @@ impl ChainClient {
                                 type_name.clone()
                             } else {
                                 // Try to resolve type from metadata registry
-                                match metadata.types().resolve(field.ty.id()) {
+                                match metadata.types().resolve(field.ty.id) {
                                     Some(type_def) => {
                                         // Try to get a human-readable type name
-                                        match type_def.type_def() {
+                                        match type_def.type_def.clone() {
                                             scale_info::TypeDef::Primitive(primitive) => {
                                                 format!("{:?}", primitive)
                                             }
                                             scale_info::TypeDef::Compact(compact) => {
-                                                format!(
-                                                    "Compact<Type #{}>",
-                                                    compact.type_param().id()
-                                                )
+                                                format!("Compact<Type #{}>", compact.type_param.id)
                                             }
                                             scale_info::TypeDef::Sequence(seq) => {
-                                                format!("Vec<Type #{}>", seq.type_param().id())
+                                                format!("Vec<Type #{}>", seq.type_param.id)
                                             }
                                             scale_info::TypeDef::Array(arr) => {
                                                 format!(
                                                     "[Type #{}; {}]",
-                                                    arr.type_param().id(),
-                                                    arr.len()
+                                                    arr.type_param.id, arr.len
                                                 )
                                             }
                                             scale_info::TypeDef::Tuple(tuple) => {
-                                                if tuple.fields().is_empty() {
+                                                if tuple.fields.is_empty() {
                                                     "()".to_string()
                                                 } else {
                                                     format!(
                                                         "Tuple with {} fields",
-                                                        tuple.fields().len()
+                                                        tuple.fields.len()
                                                     )
                                                 }
                                             }
                                             scale_info::TypeDef::Composite(composite) => {
-                                                if let Some(path) =
-                                                    type_def.path().segments().last()
-                                                {
+                                                if let Some(path) = type_def.path.segments.last() {
                                                     path.clone()
                                                 } else {
                                                     format!(
                                                         "Composite<{} fields>",
-                                                        composite.fields().len()
+                                                        composite.fields.len()
                                                     )
                                                 }
                                             }
                                             scale_info::TypeDef::Variant(variant) => {
-                                                if let Some(path) =
-                                                    type_def.path().segments().last()
-                                                {
+                                                if let Some(path) = type_def.path.segments.last() {
                                                     path.clone()
                                                 } else {
                                                     format!(
                                                         "Enum<{} variants>",
-                                                        variant.variants().len()
+                                                        variant.variants.len()
                                                     )
                                                 }
                                             }
@@ -390,7 +382,7 @@ impl ChainClient {
                                             }
                                         }
                                     }
-                                    None => format!("Type #{}", field.ty.id()),
+                                    None => format!("Type #{}", field.ty.id),
                                 }
                             };
 
