@@ -5,19 +5,54 @@ use crate::{
     wallet::{QuantumKeyPair, WalletManager},
 };
 use colored::Colorize;
+use std::io::{self, Write};
+use std::time::{Duration, Instant};
+
+/// Simple progress spinner for showing waiting status
+struct ProgressSpinner {
+    chars: Vec<char>,
+    current: usize,
+    start_time: Instant,
+}
+
+impl ProgressSpinner {
+    fn new() -> Self {
+        Self {
+            chars: vec!['|', '/', '-', '\\'],
+            current: 0,
+            start_time: Instant::now(),
+        }
+    }
+
+    fn tick(&mut self) {
+        let elapsed = self.start_time.elapsed().as_secs();
+        print!(
+            "\r🔗 Waiting for confirmation... {} ({}s)",
+            self.chars[self.current].to_string().bright_blue(),
+            elapsed
+        );
+        io::stdout().flush().unwrap();
+        self.current = (self.current + 1) % self.chars.len();
+    }
+
+    fn finish(&self, message: &str) {
+        print!("\r{}\n", message);
+        io::stdout().flush().unwrap();
+    }
+}
 
 /// Handle the send command
 pub async fn handle_send_command(
     from_wallet: String,
     to_address: String,
-    amount: u128,
+    amount_str: &str,
     node_url: &str,
 ) -> Result<()> {
     // Create chain client early to get formatting
     let chain_client = ChainClient::new(node_url).await?;
 
-    // Format the amount being sent
-    let formatted_amount = chain_client.format_balance_with_symbol(amount).await?;
+    // Parse and validate the amount
+    let (amount, formatted_amount) = chain_client.validate_and_format_amount(amount_str).await?;
     log_verbose!(
         "🚀 {} Sending {} to {}",
         "SEND".bright_cyan().bold(),
@@ -70,6 +105,7 @@ pub async fn handle_send_command(
     log_verbose!("🔗 Waiting for confirmation...");
 
     // Wait for transaction confirmation
+    let spinner = ProgressSpinner::new();
     let success = chain_client.wait_for_finalization(&tx_hash).await?;
 
     if success {
@@ -81,6 +117,14 @@ pub async fn handle_send_command(
         // Show updated balance with proper formatting
         let new_balance = chain_client.get_balance(&from_account_id).await?;
         let formatted_new_balance = chain_client.format_balance_with_symbol(new_balance).await?;
+
+        // Calculate and display transaction fee in verbose mode
+        let fee_paid = balance.saturating_sub(new_balance).saturating_sub(amount);
+        if fee_paid > 0 {
+            let formatted_fee = chain_client.format_balance_with_symbol(fee_paid).await?;
+            log_verbose!("💸 Transaction fee: {}", formatted_fee.bright_cyan());
+        }
+
         log_print!("💰 New balance: {}", formatted_new_balance.bright_yellow());
     } else {
         log_error!("Transaction failed!");

@@ -290,6 +290,69 @@ impl ChainClient {
         let formatted_amount = Self::format_balance(amount, decimals);
         Ok(format!("{} {}", formatted_amount, symbol))
     }
+
+    /// Parse human-readable amount string to raw chain units
+    /// Accepts formats like: "10", "10.0", "0.0000001", "10.5 DEV" (ignores symbol)
+    pub async fn parse_amount(&self, amount_str: &str) -> Result<u128> {
+        let (_, decimals) = self.get_chain_properties().await?;
+        Self::parse_amount_with_decimals(amount_str, decimals)
+    }
+
+    /// Parse amount string with specific decimals (static method for testing)
+    pub fn parse_amount_with_decimals(amount_str: &str, decimals: u8) -> Result<u128> {
+        // Remove any token symbol by taking only the first part (number)
+        let amount_part = amount_str.trim().split_whitespace().next().unwrap_or("");
+
+        if amount_part.is_empty() {
+            return Err(crate::error::QuantusError::Generic(
+                "Amount cannot be empty".to_string(),
+            ));
+        }
+
+        // Parse the decimal number
+        let parsed_amount: f64 = amount_part.parse().map_err(|_| {
+            crate::error::QuantusError::Generic(format!(
+                "Invalid amount format: '{}'. Use formats like '10', '10.5', '0.0001'",
+                amount_part
+            ))
+        })?;
+
+        if parsed_amount < 0.0 {
+            return Err(crate::error::QuantusError::Generic(
+                "Amount cannot be negative".to_string(),
+            ));
+        }
+
+        // Check for too many decimal places
+        if let Some(decimal_part) = amount_part.split('.').nth(1) {
+            if decimal_part.len() > decimals as usize {
+                return Err(crate::error::QuantusError::Generic(format!(
+                    "Too many decimal places. Maximum {} decimal places allowed for this chain",
+                    decimals
+                )));
+            }
+        }
+
+        // Convert to raw units by multiplying by 10^decimals
+        let multiplier = 10_f64.powi(decimals as i32);
+        let raw_amount = (parsed_amount * multiplier).round() as u128;
+
+        // Validate the result fits in u128 and isn't zero for non-zero inputs
+        if parsed_amount > 0.0 && raw_amount == 0 {
+            return Err(crate::error::QuantusError::Generic(
+                "Amount too small to represent in chain units".to_string(),
+            ));
+        }
+
+        Ok(raw_amount)
+    }
+
+    /// Validate and format amount for display before sending
+    pub async fn validate_and_format_amount(&self, amount_str: &str) -> Result<(u128, String)> {
+        let raw_amount = self.parse_amount(amount_str).await?;
+        let formatted = self.format_balance_with_symbol(raw_amount).await?;
+        Ok((raw_amount, formatted))
+    }
 }
 
 // Chain client implementation ends here

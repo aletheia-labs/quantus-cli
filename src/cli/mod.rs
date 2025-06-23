@@ -17,9 +17,9 @@ pub enum Commands {
         #[arg(short, long)]
         to: String,
 
-        /// Amount to send (in the smallest unit)
+        /// Amount to send (e.g., "10", "10.5", "0.0001")
         #[arg(short, long)]
-        amount: u128,
+        amount: String,
 
         /// Wallet name to send from
         #[arg(short, long)]
@@ -56,7 +56,7 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
     match command {
         Commands::Wallet(wallet_cmd) => wallet::handle_wallet_command(wallet_cmd, node_url).await,
         Commands::Send { to, amount, from } => {
-            send::handle_send_command(from, to, amount, node_url).await
+            send::handle_send_command(from, to, &amount, node_url).await
         }
         Commands::Balance { address } => handle_balance_command(address, node_url).await,
         Commands::Developer(dev_cmd) => handle_developer_command(dev_cmd, node_url).await,
