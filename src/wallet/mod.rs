@@ -327,7 +327,7 @@ mod tests {
         let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
 
         // Create wallet
-        let wallet_info = wallet_manager
+        let _ = wallet_manager
             .create_wallet("file-test-wallet", Some("password123"))
             .await
             .expect("Failed to create wallet");
