@@ -1,6 +1,7 @@
 use crate::{log_error, log_print, log_success, wallet::WalletManager};
 use clap::Subcommand;
 use colored::Colorize;
+use std::io::{self, Write};
 
 /// Wallet subcommands
 #[derive(Subcommand, Debug)]
@@ -314,12 +315,74 @@ pub async fn handle_wallet_command(
 
         WalletCommands::Delete { name, force } => {
             log_print!("🗑️  Deleting wallet...");
-            log_print!("Wallet: {}", name.bright_green());
-            log_print!(
-                "Force: {}",
-                if force { "Yes" } else { "No" }.bright_yellow()
-            );
-            log_print!("{}", "✅ Wallet deleted! (STUB)".green());
+
+            let wallet_manager = WalletManager::new()?;
+
+            // Check if wallet exists first
+            match wallet_manager.get_wallet(&name, None) {
+                Ok(Some(wallet_info)) => {
+                    // Show wallet info before deletion
+                    log_print!("Wallet to delete:");
+                    log_print!("  Name: {}", wallet_info.name.bright_green());
+                    log_print!("  Address: {}", wallet_info.address.bright_cyan());
+                    log_print!("  Type: {}", wallet_info.key_type.bright_yellow());
+                    log_print!(
+                        "  Created: {}",
+                        wallet_info
+                            .created_at
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                            .dimmed()
+                    );
+
+                    // Confirmation prompt unless --force is used
+                    if !force {
+                        log_print!("\n{}", "⚠️  This action cannot be undone!".bright_red());
+                        log_print!("Type the wallet name to confirm deletion:");
+
+                        print!("Confirm wallet name: ");
+                        io::stdout().flush().unwrap();
+
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input).unwrap();
+                        let input = input.trim();
+
+                        if input != name {
+                            log_print!(
+                                "{}",
+                                "❌ Wallet name doesn't match. Deletion cancelled.".red()
+                            );
+                            return Ok(());
+                        }
+                    }
+
+                    // Perform deletion
+                    match wallet_manager.delete_wallet(&name) {
+                        Ok(true) => {
+                            log_success!("✅ Wallet '{}' deleted successfully!", name);
+                        }
+                        Ok(false) => {
+                            log_error!("{}", format!("❌ Wallet '{}' was not found", name).red());
+                        }
+                        Err(e) => {
+                            log_error!("{}", format!("❌ Failed to delete wallet: {}", e).red());
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log_error!("{}", format!("❌ Wallet '{}' not found", name).red());
+                    log_print!(
+                        "Use {} to see available wallets",
+                        "quantus wallet list".bright_green()
+                    );
+                }
+                Err(e) => {
+                    log_error!("{}", format!("❌ Failed to check wallet: {}", e).red());
+                    return Err(e);
+                }
+            }
+
             Ok(())
         }
     }

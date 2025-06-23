@@ -261,6 +261,12 @@ impl WalletManager {
 
         Ok(wallet_data)
     }
+
+    /// Delete a wallet
+    pub fn delete_wallet(&self, name: &str) -> Result<bool> {
+        let keystore = Keystore::new(&self.wallets_dir);
+        keystore.delete_wallet(name)
+    }
 }
 
 #[cfg(test)]
