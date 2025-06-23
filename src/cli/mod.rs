@@ -150,7 +150,6 @@ async fn handle_developer_command(
             ];
 
             let mut created_count = 0;
-            let mut skipped_count = 0;
 
             for (name, description) in test_wallets {
                 log_verbose!("Creating wallet: {}", name.bright_green());
@@ -175,13 +174,6 @@ async fn handle_developer_command(
                 "   Created: {} wallets",
                 created_count.to_string().bright_green()
             );
-            if skipped_count > 0 {
-                log_success!(
-                    "   Skipped: {} existing wallets",
-                    skipped_count.to_string().bright_yellow()
-                );
-            }
-
             log_print!("");
             log_print!(
                 "💡 {} You can now use these wallets:",

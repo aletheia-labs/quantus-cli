@@ -1,11 +1,6 @@
-use crate::{
-    error::Result,
-    log_error, log_print, log_success, log_verbose,
-    wallet::{WalletData, WalletManager},
-};
+use crate::{log_error, log_print, log_success, wallet::WalletManager};
 use clap::Subcommand;
 use colored::Colorize;
-use std::io::{self, Write};
 
 /// Wallet subcommands
 #[derive(Subcommand, Debug)]

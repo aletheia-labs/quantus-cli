@@ -5,11 +5,10 @@
 /// - Loading and decrypting wallet data with post-quantum cryptography
 /// - Managing wallet files on disk with quantum-resistant security
 use crate::error::{Result, WalletError};
-use poseidon_resonance::PoseidonHasher;
 use rusty_crystals_dilithium::ml_dsa_87::{Keypair, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sp_core::crypto::{AccountId32, Ss58Codec};
-use sp_core::{ByteArray, Hasher};
+use sp_core::ByteArray;
 
 // Quantum-safe encryption imports
 use aes_gcm::{
@@ -18,11 +17,9 @@ use aes_gcm::{
 };
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::RngCore;
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
 use dilithium_crypto::types::{ResonancePair, ResonancePublic};
 use sp_runtime::traits::IdentifyAccount;
 
@@ -43,6 +40,7 @@ impl QuantumKeyPair {
     }
 
     /// Convert to rusty-crystals Keypair
+    #[allow(dead_code)]
     pub fn to_dilithium_keypair(&self) -> Result<Keypair> {
         // TODO: Implement conversion from bytes back to Keypair
         // For now, generate a new one as placeholder
@@ -81,6 +79,7 @@ impl QuantumKeyPair {
         account.to_ss58check()
     }
 
+    #[allow(dead_code)]
     pub fn ss58_to_account_id(s: &str) -> Vec<u8> {
         // from_ss58check returns a Result, we unwrap it to panic on invalid input.
         // We then convert the AccountId32 struct to a Vec<u8> to be compatible with Polkadart's typedef.
@@ -110,18 +109,6 @@ pub struct WalletData {
     pub keypair: QuantumKeyPair,
     pub mnemonic: Option<String>,
     pub metadata: std::collections::HashMap<String, String>,
-}
-
-impl WalletData {
-    /// Decrypt the keypair using the provided password
-    /// Note: This is a placeholder implementation since WalletData in our current design
-    /// stores the keypair in plain text. In a real implementation, we'd need to store
-    /// encrypted keypair data and decrypt it here.
-    pub fn decrypt_keypair(&self, _password: &str) -> crate::error::Result<&QuantumKeyPair> {
-        // For now, just return the keypair since it's already decrypted
-        // In a real implementation, this would decrypt the stored keypair data
-        Ok(&self.keypair)
-    }
 }
 
 /// Keystore manager for handling encrypted wallet storage

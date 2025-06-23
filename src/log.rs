@@ -20,13 +20,6 @@ pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-/// Print message only when verbose mode is enabled
-pub fn verbose(message: &str) {
-    if is_verbose() {
-        println!("{}", message);
-    }
-}
-
 /// Print formatted message only when verbose mode is enabled
 pub fn verboseln(args: std::fmt::Arguments) {
     if is_verbose() {
@@ -34,19 +27,9 @@ pub fn verboseln(args: std::fmt::Arguments) {
     }
 }
 
-/// Print message regardless of verbose mode (for important user output)
-pub fn print(message: &str) {
-    println!("{}", message);
-}
-
 /// Print formatted message regardless of verbose mode (for important user output)
 pub fn println(args: std::fmt::Arguments) {
     println!("{}", args);
-}
-
-/// Print error message regardless of verbose mode
-pub fn error(message: &str) {
-    eprintln!("{} {}", "❌ Error:".red().bold(), message);
 }
 
 /// Print formatted error message regardless of verbose mode
@@ -54,35 +37,9 @@ pub fn errorln(args: std::fmt::Arguments) {
     eprintln!("{} {}", "❌ Error:".red().bold(), args);
 }
 
-/// Print success message regardless of verbose mode
-pub fn success(message: &str) {
-    println!("{} {}", "✅".green(), message);
-}
-
 /// Print formatted success message regardless of verbose mode
 pub fn successln(args: std::fmt::Arguments) {
     println!("{} {}", "✅".green(), args);
-}
-
-/// Print info message in verbose mode
-pub fn info(message: &str) {
-    if is_verbose() {
-        println!("{} {}", "ℹ️ ".bright_blue(), message);
-    }
-}
-
-/// Print formatted info message in verbose mode
-pub fn infoln(args: std::fmt::Arguments) {
-    if is_verbose() {
-        println!("{} {}", "ℹ️ ".bright_blue(), args);
-    }
-}
-
-/// Print debug message in verbose mode
-pub fn debug(message: &str) {
-    if is_verbose() {
-        println!("{} {}", "🔍".dimmed(), message);
-    }
 }
 
 /// Print formatted debug message in verbose mode

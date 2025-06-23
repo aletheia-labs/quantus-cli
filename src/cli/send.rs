@@ -1,8 +1,6 @@
 use crate::{
-    chain::client::ChainClient,
-    error::Result,
-    log_error, log_print, log_success, log_verbose,
-    wallet::{QuantumKeyPair, WalletManager},
+    chain::client::ChainClient, error::Result, log_error, log_print, log_success, log_verbose,
+    wallet::WalletManager,
 };
 use colored::Colorize;
 use std::io::{self, Write};
@@ -34,11 +32,6 @@ impl ProgressSpinner {
         );
         io::stdout().flush().unwrap();
         self.current = (self.current + 1) % self.chars.len();
-    }
-
-    fn finish(&self, message: &str) {
-        print!("\r{}\n", message);
-        io::stdout().flush().unwrap();
     }
 }
 
@@ -74,8 +67,6 @@ pub async fn handle_send_command(
 
     // Get the keypair (already decrypted)
     let keypair = &wallet_data.keypair;
-
-    // Chain client already created above
 
     // Get account information
     let from_account_id = keypair.to_account_id_ss58check();

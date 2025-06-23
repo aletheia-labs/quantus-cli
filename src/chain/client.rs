@@ -2,21 +2,74 @@ use super::quantus_runtime_config::QuantusRuntimeConfig;
 /// Chain client for interacting with the Quantus network
 use crate::error::Result;
 use crate::wallet::QuantumKeyPair;
-use crate::{log_debug, log_error, log_print, log_verbose};
+use crate::{log_debug, log_print, log_verbose};
 use colored::Colorize;
 use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
-    ac_primitives::{Config, ExtrinsicSigner, UncheckedExtrinsic},
-    extrinsic::BalancesExtrinsics,
-    rpc::JsonrpseeClient,
-    Api, GetAccountInformation, SubmitAndWatch, SystemApi, TransactionStatus, XtStatus,
+    ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
+    GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
 };
+
+/// Macro to submit any type of extrinsic without code duplication
+macro_rules! submit_extrinsic {
+    ($self:expr, $keypair:expr, $extrinsic:expr) => {{
+        // Convert our QuantumKeyPair to ResonancePair
+        let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
+        })?;
+
+        // Create ExtrinsicSigner
+        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+
+        // Clone the API to set the signer
+        let mut api_with_signer = $self.api.clone();
+        api_with_signer.set_signer(extrinsic_signer);
+
+        // Submit and watch the extrinsic until it's included in a block
+        let result = api_with_signer
+            .submit_and_watch_extrinsic_until($extrinsic, XtStatus::InBlock)
+            .await
+            .map_err(|e| {
+                crate::error::QuantusError::NetworkError(format!(
+                    "Failed to submit extrinsic: {:?}",
+                    e
+                ))
+            })?;
+
+        let extrinsic_hash = result.extrinsic_hash;
+        let block_hash = result.block_hash.unwrap_or_default();
+
+        log_verbose!(
+            "📋 Transaction hash: {}",
+            format!("{:?}", extrinsic_hash).bright_blue()
+        );
+        log_verbose!(
+            "🔗 Included in block: {}",
+            format!("{:?}", block_hash).bright_blue()
+        );
+
+        // Log events if available
+        if let Some(events) = result.events {
+            log_verbose!("📊 Transaction events:");
+            for (i, event) in events.iter().enumerate() {
+                log_verbose!(
+                    "   {} Event: Pallet: {}, Variant: {}",
+                    i,
+                    event.pallet_name(),
+                    event.variant_name()
+                );
+            }
+        }
+
+        // Return the extrinsic hash as a hex string
+        Ok::<String, crate::error::QuantusError>(format!("{:?}", extrinsic_hash))
+    }};
+}
 
 /// Chain client for interacting with the Quantus network
 pub struct ChainClient {
     api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
-    node_url: String,
 }
 
 impl ChainClient {
@@ -24,8 +77,8 @@ impl ChainClient {
     pub async fn new(node_url: &str) -> Result<Self> {
         log_verbose!("🔗 Connecting to Quantus node: {}", node_url.bright_blue());
 
-        // Use the substrate-api-client with proper configuration
-        let client = JsonrpseeClient::with_default_url().await.map_err(|e| {
+        // Use the substrate-api-client with the provided node URL
+        let client = JsonrpseeClient::new(node_url).await.map_err(|e| {
             crate::error::QuantusError::NetworkError(format!("Failed to connect to node: {:?}", e))
         })?;
 
@@ -40,10 +93,7 @@ impl ChainClient {
 
         log_verbose!("✅ Connected to Quantus node successfully!");
 
-        Ok(Self {
-            api,
-            node_url: node_url.to_string(),
-        })
+        Ok(Self { api })
     }
 
     /// Get the balance of an account using substrate-api-client
@@ -102,7 +152,7 @@ impl ChainClient {
         to_address: &str,
         amount: u128,
     ) -> Result<String> {
-        log_verbose!("📤 Creating transfer transaction...");
+        log_verbose!("🚀 Creating transfer transaction...");
         log_verbose!(
             "   From: {}",
             from_keypair.to_account_id_ss58check().bright_cyan()
@@ -118,22 +168,23 @@ impl ChainClient {
             ))
         })?;
 
-        // Convert our QuantumKeyPair to ResonancePair
-        let resonance_pair = from_keypair.to_resonance_pair().map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
-        })?;
+        // // Convert our QuantumKeyPair to ResonancePair
+        // let resonance_pair = from_keypair.to_resonance_pair().map_err(|e| {
+        //     crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
+        // })?;
 
-        // Create ExtrinsicSigner
-        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+        // // Create ExtrinsicSigner
+        // let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
 
-        // Clone the API to set the signer
-        let mut api_with_signer = self.api.clone();
-        api_with_signer.set_signer(extrinsic_signer);
+        // // Clone the API to set the signer
+        // let mut api_with_signer = self.api.clone();
+        // api_with_signer.set_signer(extrinsic_signer);
 
         log_verbose!("✍️  Creating balance transfer extrinsic...");
 
         // Create the transfer extrinsic using BalancesExtrinsics trait
-        let transfer_extrinsic: UncheckedExtrinsic<_, _, _, _> = api_with_signer
+        let transfer_extrinsic = self
+            .api
             .balance_transfer_allow_death(to_account_id.into(), amount)
             .await
             .ok_or_else(|| {
@@ -143,46 +194,9 @@ impl ChainClient {
             })?;
 
         log_verbose!("📋 Extrinsic created: {:?}", transfer_extrinsic);
-        log_verbose!("✍️  Transaction signed with Dilithium signature");
 
-        // Submit and watch the extrinsic until it's included in a block
-        let result = api_with_signer
-            .submit_and_watch_extrinsic_until(transfer_extrinsic, XtStatus::InBlock)
-            .await
-            .map_err(|e| {
-                crate::error::QuantusError::NetworkError(format!(
-                    "Failed to submit transfer extrinsic: {:?}",
-                    e
-                ))
-            })?;
-
-        let extrinsic_hash = result.extrinsic_hash;
-        let block_hash = result.block_hash.unwrap_or_default();
-
-        log_verbose!(
-            "📋 Transaction hash: {}",
-            format!("{:?}", extrinsic_hash).bright_blue()
-        );
-        log_verbose!(
-            "🔗 Included in block: {}",
-            format!("{:?}", block_hash).bright_blue()
-        );
-
-        // Log events if available
-        if let Some(events) = result.events {
-            log_verbose!("📊 Transaction events:");
-            for (i, event) in events.iter().enumerate() {
-                log_verbose!(
-                    "   {} Event: Pallet: {}, Variant: {}",
-                    i,
-                    event.pallet_name(),
-                    event.variant_name()
-                );
-            }
-        }
-
-        // Return the extrinsic hash as a hex string
-        Ok(format!("{:?}", extrinsic_hash))
+        // Use the macro to submit the extrinsic
+        submit_extrinsic!(self, from_keypair, transfer_extrinsic)
     }
 
     /// Wait for transaction finalization - now using real block monitoring
