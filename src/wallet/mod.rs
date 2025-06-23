@@ -49,9 +49,6 @@ impl WalletManager {
 
         // Generate a new Dilithium keypair'
         let mnemonic = generate_mnemonic(24).map_err(|_| WalletError::KeyGeneration)?;
-
-        println!("create wallet: mnemonic: {}", mnemonic);
-
         let lattice =
             HDLattice::from_mnemonic(&mnemonic, None).expect("Failed to generate lattice");
         let dilithium_keypair = lattice.generate_keys();
