@@ -269,3 +269,308 @@ impl Keystore {
         Ok(wallet_data)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dilithium_crypto::{crystal_alice, crystal_charlie, dilithium_bob};
+    use rusty_crystals_dilithium::ml_dsa_87::Keypair;
+
+    #[test]
+    fn test_quantum_keypair_from_dilithium_keypair() {
+        // Generate a test keypair
+        let entropy = [1u8; 32];
+        let dilithium_keypair = Keypair::generate(Some(&entropy));
+
+        // Convert to QuantumKeyPair
+        let quantum_keypair = QuantumKeyPair::from_dilithium_keypair(&dilithium_keypair);
+
+        // Verify the conversion
+        assert_eq!(
+            quantum_keypair.public_key,
+            dilithium_keypair.public.to_bytes().to_vec()
+        );
+        assert_eq!(
+            quantum_keypair.private_key,
+            dilithium_keypair.secret.to_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_quantum_keypair_to_dilithium_keypair_roundtrip() {
+        // Generate a test keypair
+        let entropy = [2u8; 32];
+        let original_keypair = Keypair::generate(Some(&entropy));
+
+        // Convert to QuantumKeyPair and back
+        let quantum_keypair = QuantumKeyPair::from_dilithium_keypair(&original_keypair);
+        let converted_keypair = quantum_keypair
+            .to_dilithium_keypair()
+            .expect("Conversion should succeed");
+
+        // Verify round-trip conversion preserves data
+        assert_eq!(
+            original_keypair.public.to_bytes(),
+            converted_keypair.public.to_bytes()
+        );
+        assert_eq!(
+            original_keypair.secret.to_bytes(),
+            converted_keypair.secret.to_bytes()
+        );
+    }
+
+    #[test]
+    fn test_quantum_keypair_from_resonance_pair() {
+        // Test with crystal_alice
+        let resonance_pair = crystal_alice();
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&resonance_pair);
+
+        // Verify the conversion
+        assert_eq!(
+            quantum_keypair.public_key,
+            resonance_pair.public.as_ref().to_vec()
+        );
+        assert_eq!(
+            quantum_keypair.private_key,
+            resonance_pair.secret.as_ref().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_quantum_keypair_to_resonance_pair_roundtrip() {
+        // Test with crystal_bob
+        let original_pair = dilithium_bob();
+        let quantum_keypair = QuantumKeyPair::from_resonance_pair(&original_pair);
+        let converted_pair = quantum_keypair
+            .to_resonance_pair()
+            .expect("Conversion should succeed");
+
+        // Verify round-trip conversion preserves data
+        assert_eq!(
+            original_pair.public.as_ref(),
+            converted_pair.public.as_ref()
+        );
+        assert_eq!(
+            original_pair.secret.as_ref(),
+            converted_pair.secret.as_ref()
+        );
+    }
+
+    #[test]
+    fn test_quantum_keypair_address_generation() {
+        // Test with known test keypairs
+        let test_pairs = vec![
+            ("crystal_alice", crystal_alice()),
+            ("crystal_bob", dilithium_bob()),
+            ("crystal_charlie", crystal_charlie()),
+        ];
+
+        for (name, resonance_pair) in test_pairs {
+            let quantum_keypair = QuantumKeyPair::from_resonance_pair(&resonance_pair);
+
+            // Generate address using both methods
+            let account_id = quantum_keypair.to_account_id_32();
+            let ss58_address = quantum_keypair.to_account_id_ss58check();
+
+            // Verify address format
+            assert!(
+                ss58_address.starts_with("5"),
+                "SS58 address for {} should start with 5",
+                name
+            );
+            assert!(
+                ss58_address.len() >= 47,
+                "SS58 address for {} should be at least 47 characters",
+                name
+            );
+
+            // Verify consistency between methods
+            assert_eq!(
+                account_id.to_ss58check(),
+                ss58_address,
+                "Address methods should be consistent for {}",
+                name
+            );
+
+            // Verify it matches the direct ResonancePair method
+            let expected_address = resonance_pair.public().into_account().to_ss58check();
+            assert_eq!(
+                ss58_address, expected_address,
+                "Address should match ResonancePair method for {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_ss58_to_account_id_conversion() {
+        // Test with known addresses
+        let test_cases = vec![
+            crystal_alice().public().into_account().to_ss58check(),
+            dilithium_bob().public().into_account().to_ss58check(),
+            crystal_charlie().public().into_account().to_ss58check(),
+        ];
+
+        for ss58_address in test_cases {
+            // Convert SS58 to account ID bytes
+            let account_bytes = QuantumKeyPair::ss58_to_account_id(&ss58_address);
+
+            // Verify length (AccountId32 should be 32 bytes)
+            assert_eq!(account_bytes.len(), 32, "Account ID should be 32 bytes");
+
+            // Convert back to SS58 and verify round-trip
+            let account_id =
+                AccountId32::from_slice(&account_bytes).expect("Should create valid AccountId32");
+            let round_trip_address = account_id.to_ss58check();
+            assert_eq!(
+                ss58_address, round_trip_address,
+                "Round-trip conversion should preserve address"
+            );
+        }
+    }
+
+    #[test]
+    fn test_address_consistency_across_conversions() {
+        // Start with a Dilithium keypair
+        let entropy = [3u8; 32];
+        let dilithium_keypair = Keypair::generate(Some(&entropy));
+
+        // Convert through different paths
+        let quantum_from_dilithium = QuantumKeyPair::from_dilithium_keypair(&dilithium_keypair);
+        let resonance_from_quantum = quantum_from_dilithium
+            .to_resonance_pair()
+            .expect("Should convert");
+        let quantum_from_resonance = QuantumKeyPair::from_resonance_pair(&resonance_from_quantum);
+
+        // All should generate the same address
+        let addr1 = quantum_from_dilithium.to_account_id_ss58check();
+        let addr2 = quantum_from_resonance.to_account_id_ss58check();
+        let addr3 = resonance_from_quantum
+            .public()
+            .into_account()
+            .to_ss58check();
+
+        assert_eq!(
+            addr1, addr2,
+            "Addresses should be consistent across conversion paths"
+        );
+        assert_eq!(
+            addr2, addr3,
+            "Address should match direct ResonancePair calculation"
+        );
+    }
+
+    #[test]
+    fn test_known_test_wallet_addresses() {
+        // Test that our test wallets generate expected addresses
+        let alice_pair = crystal_alice();
+        let bob_pair = dilithium_bob();
+        let charlie_pair = crystal_charlie();
+
+        let alice_quantum = QuantumKeyPair::from_resonance_pair(&alice_pair);
+        let bob_quantum = QuantumKeyPair::from_resonance_pair(&bob_pair);
+        let charlie_quantum = QuantumKeyPair::from_resonance_pair(&charlie_pair);
+
+        let alice_addr = alice_quantum.to_account_id_ss58check();
+        let bob_addr = bob_quantum.to_account_id_ss58check();
+        let charlie_addr = charlie_quantum.to_account_id_ss58check();
+
+        // Addresses should be different
+        assert_ne!(
+            alice_addr, bob_addr,
+            "Alice and Bob should have different addresses"
+        );
+        assert_ne!(
+            bob_addr, charlie_addr,
+            "Bob and Charlie should have different addresses"
+        );
+        assert_ne!(
+            alice_addr, charlie_addr,
+            "Alice and Charlie should have different addresses"
+        );
+
+        // All should be valid SS58 addresses
+        assert!(
+            alice_addr.starts_with("5"),
+            "Alice address should be valid SS58"
+        );
+        assert!(
+            bob_addr.starts_with("5"),
+            "Bob address should be valid SS58"
+        );
+        assert!(
+            charlie_addr.starts_with("5"),
+            "Charlie address should be valid SS58"
+        );
+
+        println!("Test wallet addresses:");
+        println!("  Alice:   {}", alice_addr);
+        println!("  Bob:     {}", bob_addr);
+        println!("  Charlie: {}", charlie_addr);
+    }
+
+    #[test]
+    fn test_invalid_ss58_address_handling() {
+        // Test with invalid SS58 addresses
+        let invalid_addresses = vec![
+            "invalid",
+            "5",          // Too short
+            "1234567890", // Wrong format
+            "",           // Empty
+        ];
+
+        for invalid_addr in invalid_addresses {
+            let result =
+                std::panic::catch_unwind(|| QuantumKeyPair::ss58_to_account_id(invalid_addr));
+            assert!(
+                result.is_err(),
+                "Should panic on invalid address: {}",
+                invalid_addr
+            );
+        }
+    }
+
+    #[test]
+    fn test_keypair_data_integrity() {
+        // Generate multiple keypairs and verify they maintain data integrity
+        for i in 0..5 {
+            let entropy = [i as u8; 32];
+            let dilithium_keypair = Keypair::generate(Some(&entropy));
+            let quantum_keypair = QuantumKeyPair::from_dilithium_keypair(&dilithium_keypair);
+
+            // Print actual key sizes for debugging (first iteration only)
+            if i == 0 {
+                println!(
+                    "Actual public key size: {}",
+                    quantum_keypair.public_key.len()
+                );
+                println!(
+                    "Actual private key size: {}",
+                    quantum_keypair.private_key.len()
+                );
+            }
+
+            // Verify key sizes are consistent and reasonable
+            assert!(
+                quantum_keypair.public_key.len() > 1000,
+                "Public key should be reasonably large (actual: {})",
+                quantum_keypair.public_key.len()
+            );
+            assert!(
+                quantum_keypair.private_key.len() > 2000,
+                "Private key should be reasonably large (actual: {})",
+                quantum_keypair.private_key.len()
+            );
+
+            // Verify keys are not all zeros
+            assert!(
+                quantum_keypair.public_key.iter().any(|&b| b != 0),
+                "Public key should not be all zeros"
+            );
+            assert!(
+                quantum_keypair.private_key.iter().any(|&b| b != 0),
+                "Private key should not be all zeros"
+            );
+        }
+    }
+}
