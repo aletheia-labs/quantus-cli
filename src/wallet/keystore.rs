@@ -1,15 +1,24 @@
-/// Secure keystore for wallet data
+/// Quantum-safe keystore for wallet data
 ///
 /// This module handles:
-/// - Encrypting and storing wallet data
-/// - Loading and decrypting wallet data
-/// - Managing wallet files on disk
-use crate::error::Result;
+/// - Quantum-safe encrypting and storing wallet data using Argon2 + AES-256-GCM
+/// - Loading and decrypting wallet data with post-quantum cryptography
+/// - Managing wallet files on disk with quantum-resistant security
+use crate::error::{Result, WalletError};
 use poseidon_resonance::PoseidonHasher;
 use rusty_crystals_dilithium::ml_dsa_87::{Keypair, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::Hasher;
+
+// Quantum-safe encryption imports
+use aes_gcm::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm, Key, Nonce,
+};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use rand::RngCore;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use std::path::Path;
 
@@ -58,13 +67,17 @@ impl QuantumKeyPair {
     }
 }
 
-/// Encrypted wallet data structure
+/// Quantum-safe encrypted wallet data structure
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EncryptedWallet {
     pub name: String,
     pub encrypted_data: Vec<u8>,
-    pub salt: Vec<u8>,
-    pub nonce: Vec<u8>,
+    pub kyber_ciphertext: Vec<u8>, // Reserved for future ML-KEM implementation
+    pub kyber_public_key: Vec<u8>, // Reserved for future ML-KEM implementation
+    pub argon2_salt: Vec<u8>,      // Salt for password-based key derivation
+    pub argon2_params: String,     // Argon2 parameters for verification
+    pub aes_nonce: Vec<u8>,        // AES-GCM nonce
+    pub encryption_version: u32,   // Version for future crypto upgrades
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -145,34 +158,79 @@ impl Keystore {
         }
     }
 
-    /// Encrypt wallet data (placeholder implementation)
+    /// Encrypt wallet data using quantum-safe Argon2 + AES-256-GCM
+    /// This provides quantum-safe symmetric encryption with strong password derivation
     pub fn encrypt_wallet_data(
         &self,
         data: &WalletData,
         password: &str,
     ) -> Result<EncryptedWallet> {
-        // TODO: Implement proper encryption
-        // For now, just serialize the data as a placeholder
-        let serialized = serde_json::to_vec(data)?;
+        // 1. Generate salt for Argon2
+        let mut argon2_salt = [0u8; 16];
+        OsRng.fill_bytes(&mut argon2_salt);
+
+        // 2. Derive encryption key from password using Argon2 (quantum-safe)
+        let argon2 = Argon2::default();
+        let salt_string = argon2::password_hash::SaltString::encode_b64(&argon2_salt)
+            .map_err(|_| WalletError::Encryption)?;
+        let password_hash = argon2
+            .hash_password(password.as_bytes(), &salt_string)
+            .map_err(|_| WalletError::Encryption)?;
+
+        // 3. Use password hash as AES-256 key (quantum-safe with 256-bit key)
+        let hash_bytes = password_hash.hash.as_ref().unwrap().as_bytes();
+        let aes_key = Key::<Aes256Gcm>::from_slice(&hash_bytes[..32]);
+        let cipher = Aes256Gcm::new(aes_key);
+
+        // 4. Generate nonce and encrypt the wallet data
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let serialized_data = serde_json::to_vec(data)?;
+        let encrypted_data = cipher
+            .encrypt(&nonce, serialized_data.as_ref())
+            .map_err(|_| WalletError::Encryption)?;
 
         Ok(EncryptedWallet {
             name: data.name.clone(),
-            encrypted_data: serialized, // This should be encrypted!
-            salt: vec![0u8; 32],        // Placeholder salt
-            nonce: vec![0u8; 12],       // Placeholder nonce
+            encrypted_data,
+            kyber_ciphertext: vec![], // Reserved for future ML-KEM implementation
+            kyber_public_key: vec![], // Reserved for future ML-KEM implementation
+            argon2_salt: argon2_salt.to_vec(),
+            argon2_params: password_hash.to_string(),
+            aes_nonce: nonce.to_vec(),
+            encryption_version: 1, // Version 1: Argon2 + AES-256-GCM (quantum-safe)
             created_at: chrono::Utc::now(),
         })
     }
 
-    /// Decrypt wallet data (placeholder implementation)
+    /// Decrypt wallet data using quantum-safe decryption
     pub fn decrypt_wallet_data(
         &self,
         encrypted: &EncryptedWallet,
         password: &str,
     ) -> Result<WalletData> {
-        // TODO: Implement proper decryption
-        // For now, just deserialize the data as a placeholder
-        let data: WalletData = serde_json::from_slice(&encrypted.encrypted_data)?;
-        Ok(data)
+        // 1. Verify password using stored Argon2 hash
+        let argon2 = Argon2::default();
+        let password_hash = PasswordHash::new(&encrypted.argon2_params)
+            .map_err(|_| WalletError::InvalidPassword)?;
+
+        argon2
+            .verify_password(password.as_bytes(), &password_hash)
+            .map_err(|_| WalletError::InvalidPassword)?;
+
+        // 2. Derive AES key from verified password hash
+        let hash_bytes = password_hash.hash.as_ref().unwrap().as_bytes();
+        let aes_key = Key::<Aes256Gcm>::from_slice(&hash_bytes[..32]);
+        let cipher = Aes256Gcm::new(aes_key);
+
+        // 3. Decrypt the data
+        let nonce = Nonce::from_slice(&encrypted.aes_nonce);
+        let decrypted_data = cipher
+            .decrypt(nonce, encrypted.encrypted_data.as_ref())
+            .map_err(|_| WalletError::Decryption)?;
+
+        // 4. Deserialize the wallet data
+        let wallet_data: WalletData = serde_json::from_slice(&decrypted_data)?;
+
+        Ok(wallet_data)
     }
 }

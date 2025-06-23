@@ -84,8 +84,27 @@ impl WalletManager {
 
     /// List all wallets
     pub fn list_wallets(&self) -> Result<Vec<WalletInfo>> {
-        // TODO: Implement wallet listing
-        Ok(vec![])
+        let keystore = Keystore::new(&self.wallets_dir);
+        let wallet_names = keystore.list_wallets()?;
+
+        let mut wallets = Vec::new();
+        for name in wallet_names {
+            if let Some(encrypted_wallet) = keystore.load_wallet(&name)? {
+                // Create basic wallet info from encrypted wallet metadata
+                // Note: We can't decrypt without password, so we show limited info
+                let wallet_info = WalletInfo {
+                    name: encrypted_wallet.name,
+                    address: "[Encrypted - Use 'view' command]".to_string(),
+                    created_at: encrypted_wallet.created_at,
+                    key_type: "Dilithium ML-DSA-87".to_string(),
+                };
+                wallets.push(wallet_info);
+            }
+        }
+
+        // Sort by creation date (newest first)
+        wallets.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(wallets)
     }
 
     /// Import wallet from mnemonic phrase
@@ -136,10 +155,45 @@ impl WalletManager {
         })
     }
 
-    /// Get wallet by name
-    pub fn get_wallet(&self, name: &str) -> Result<Option<WalletInfo>> {
-        // TODO: Implement wallet retrieval
-        Ok(None)
+    /// Get wallet by name with password for decryption
+    pub fn get_wallet(&self, name: &str, password: Option<&str>) -> Result<Option<WalletInfo>> {
+        let keystore = Keystore::new(&self.wallets_dir);
+
+        if let Some(encrypted_wallet) = keystore.load_wallet(name)? {
+            if let Some(pwd) = password {
+                // Decrypt and show full details
+                match keystore.decrypt_wallet_data(&encrypted_wallet, pwd) {
+                    Ok(wallet_data) => {
+                        let address = wallet_data.keypair.to_account_id_ss58check();
+                        Ok(Some(WalletInfo {
+                            name: wallet_data.name,
+                            address,
+                            created_at: encrypted_wallet.created_at,
+                            key_type: "Dilithium ML-DSA-87".to_string(),
+                        }))
+                    }
+                    Err(_) => {
+                        // Wrong password, return basic info
+                        Ok(Some(WalletInfo {
+                            name: encrypted_wallet.name,
+                            address: "[Wrong password]".to_string(),
+                            created_at: encrypted_wallet.created_at,
+                            key_type: "Dilithium ML-DSA-87".to_string(),
+                        }))
+                    }
+                }
+            } else {
+                // No password provided, return basic info
+                Ok(Some(WalletInfo {
+                    name: encrypted_wallet.name,
+                    address: "[Password required]".to_string(),
+                    created_at: encrypted_wallet.created_at,
+                    key_type: "Dilithium ML-DSA-87".to_string(),
+                }))
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -248,8 +302,8 @@ mod tests {
 
         assert_eq!(encrypted_wallet.name, "test-wallet");
         assert!(!encrypted_wallet.encrypted_data.is_empty());
-        assert!(!encrypted_wallet.salt.is_empty());
-        assert!(!encrypted_wallet.nonce.is_empty());
+        assert!(!encrypted_wallet.argon2_salt.is_empty());
+        assert!(!encrypted_wallet.aes_nonce.is_empty());
 
         // Test decryption
         let decrypted_wallet_data = keystore
@@ -343,8 +397,8 @@ mod tests {
             loaded_wallet.encrypted_data,
             encrypted_wallet.encrypted_data
         );
-        assert_eq!(loaded_wallet.salt, encrypted_wallet.salt);
-        assert_eq!(loaded_wallet.nonce, encrypted_wallet.nonce);
+        assert_eq!(loaded_wallet.argon2_salt, encrypted_wallet.argon2_salt);
+        assert_eq!(loaded_wallet.aes_nonce, encrypted_wallet.aes_nonce);
 
         // Test loading non-existent wallet
         let non_existent = keystore
@@ -447,5 +501,104 @@ mod tests {
             crate::error::QuantusError::Wallet(WalletError::AlreadyExists) => {}
             _ => panic!("Expected AlreadyExists error"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_list_wallets() {
+        let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
+
+        // Initially should be empty
+        let wallets = wallet_manager
+            .list_wallets()
+            .expect("Failed to list wallets");
+        assert_eq!(wallets.len(), 0);
+
+        // Create some wallets
+        wallet_manager
+            .create_wallet("wallet-1", Some("password1"))
+            .await
+            .expect("Failed to create wallet 1");
+
+        wallet_manager
+            .create_wallet("wallet-2", None)
+            .await
+            .expect("Failed to create wallet 2");
+
+        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+        wallet_manager
+            .import_wallet("imported-wallet", test_mnemonic, Some("password3"))
+            .await
+            .expect("Failed to import wallet");
+
+        // List wallets
+        let wallets = wallet_manager
+            .list_wallets()
+            .expect("Failed to list wallets");
+
+        assert_eq!(wallets.len(), 3);
+
+        // Check that all wallet names are present
+        let wallet_names: Vec<&String> = wallets.iter().map(|w| &w.name).collect();
+        assert!(wallet_names.contains(&&"wallet-1".to_string()));
+        assert!(wallet_names.contains(&&"wallet-2".to_string()));
+        assert!(wallet_names.contains(&&"imported-wallet".to_string()));
+
+        // Check that addresses are encrypted in list view
+        for wallet in &wallets {
+            assert_eq!(wallet.address, "[Encrypted - Use 'view' command]");
+            assert_eq!(wallet.key_type, "Dilithium ML-DSA-87");
+        }
+
+        // Check sorting (newest first)
+        assert!(wallets[0].created_at >= wallets[1].created_at);
+        assert!(wallets[1].created_at >= wallets[2].created_at);
+    }
+
+    #[tokio::test]
+    async fn test_get_wallet() {
+        let (wallet_manager, _temp_dir) = create_test_wallet_manager().await;
+
+        // Create a wallet
+        let created_wallet = wallet_manager
+            .create_wallet("test-get-wallet", Some("test-password"))
+            .await
+            .expect("Failed to create wallet");
+
+        // Test getting wallet without password
+        let wallet_info = wallet_manager
+            .get_wallet("test-get-wallet", None)
+            .expect("Failed to get wallet")
+            .expect("Wallet should exist");
+
+        assert_eq!(wallet_info.name, "test-get-wallet");
+        assert_eq!(wallet_info.address, "[Password required]");
+
+        // Test getting wallet with wrong password
+        // Now with real quantum-safe encryption, wrong password should be detected
+        let wallet_info = wallet_manager
+            .get_wallet("test-get-wallet", Some("wrong-password"))
+            .expect("Failed to get wallet")
+            .expect("Wallet should exist");
+
+        assert_eq!(wallet_info.name, "test-get-wallet");
+        // With real encryption, wrong password returns placeholder text
+        assert_eq!(wallet_info.address, "[Wrong password]");
+
+        // Test getting wallet with correct password
+        let wallet_info = wallet_manager
+            .get_wallet("test-get-wallet", Some("test-password"))
+            .expect("Failed to get wallet")
+            .expect("Wallet should exist");
+
+        assert_eq!(wallet_info.name, "test-get-wallet");
+        assert_eq!(wallet_info.address, created_wallet.address);
+        assert!(wallet_info.address.starts_with("5"));
+
+        // Test getting non-existent wallet
+        let result = wallet_manager
+            .get_wallet("non-existent-wallet", None)
+            .expect("Should not error on non-existent wallet");
+
+        assert!(result.is_none());
     }
 }

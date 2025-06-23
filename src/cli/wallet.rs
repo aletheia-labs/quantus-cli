@@ -115,12 +115,93 @@ pub async fn handle_wallet_command(
                 "👁️  Viewing wallet information...".bright_blue().bold()
             );
 
+            let wallet_manager = WalletManager::new()?;
+
             if all {
-                println!("Showing all wallets (STUB)");
+                // Show all wallets (same as list command but with different header)
+                match wallet_manager.list_wallets() {
+                    Ok(wallets) => {
+                        if wallets.is_empty() {
+                            println!("{}", "No wallets found.".dimmed());
+                        } else {
+                            println!("All wallets ({}):\n", wallets.len());
+
+                            for (i, wallet) in wallets.iter().enumerate() {
+                                println!(
+                                    "{}. {}",
+                                    (i + 1).to_string().bright_yellow(),
+                                    wallet.name.bright_green()
+                                );
+                                println!("   Address: {}", wallet.address.bright_cyan());
+                                println!("   Type: {}", wallet.key_type.bright_yellow());
+                                println!(
+                                    "   Created: {}",
+                                    wallet
+                                        .created_at
+                                        .format("%Y-%m-%d %H:%M:%S UTC")
+                                        .to_string()
+                                        .dimmed()
+                                );
+                                if i < wallets.len() - 1 {
+                                    println!();
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("{}", format!("❌ Failed to view wallets: {}", e).red());
+                        return Err(e);
+                    }
+                }
             } else if let Some(wallet_name) = name {
-                println!("Showing wallet: {} (STUB)", wallet_name.bright_green());
+                // Show specific wallet details
+                match wallet_manager.get_wallet(&wallet_name, None) {
+                    Ok(Some(wallet_info)) => {
+                        println!("Wallet Details:\n");
+                        println!("Name: {}", wallet_info.name.bright_green());
+                        println!("Address: {}", wallet_info.address.bright_cyan());
+                        println!("Key Type: {}", wallet_info.key_type.bright_yellow());
+                        println!(
+                            "Created: {}",
+                            wallet_info
+                                .created_at
+                                .format("%Y-%m-%d %H:%M:%S UTC")
+                                .to_string()
+                                .dimmed()
+                        );
+
+                        if wallet_info.address.contains("[") {
+                            println!(
+                                "\n{}",
+                                "💡 To see the full address, use the export command with password"
+                                    .dimmed()
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        println!("{}", format!("❌ Wallet '{}' not found", wallet_name).red());
+                        println!(
+                            "Use {} to see available wallets",
+                            "quantus wallet list".bright_green()
+                        );
+                    }
+                    Err(e) => {
+                        println!("{}", format!("❌ Failed to view wallet: {}", e).red());
+                        return Err(e);
+                    }
+                }
             } else {
-                println!("Please specify a wallet name or use --all flag");
+                println!(
+                    "{}",
+                    "Please specify a wallet name with --name or use --all to show all wallets"
+                        .yellow()
+                );
+                println!("Examples:");
+                println!(
+                    "  {}",
+                    "quantus wallet view --name my-wallet".bright_green()
+                );
+                println!("  {}", "quantus wallet view --all".bright_green());
             }
 
             Ok(())
@@ -186,7 +267,54 @@ pub async fn handle_wallet_command(
 
         WalletCommands::List => {
             println!("{}", "📋 Listing all wallets...".bright_blue().bold());
-            println!("No wallets found (STUB)");
+
+            let wallet_manager = WalletManager::new()?;
+
+            match wallet_manager.list_wallets() {
+                Ok(wallets) => {
+                    if wallets.is_empty() {
+                        println!("{}", "No wallets found.".dimmed());
+                        println!(
+                            "Create a new wallet with: {}",
+                            "quantus wallet create --name <name>".bright_green()
+                        );
+                    } else {
+                        println!("Found {} wallet(s):\n", wallets.len());
+
+                        for (i, wallet) in wallets.iter().enumerate() {
+                            println!(
+                                "{}. {}",
+                                (i + 1).to_string().bright_yellow(),
+                                wallet.name.bright_green()
+                            );
+                            println!("   Address: {}", wallet.address.bright_cyan());
+                            println!("   Type: {}", wallet.key_type.bright_yellow());
+                            println!(
+                                "   Created: {}",
+                                wallet
+                                    .created_at
+                                    .format("%Y-%m-%d %H:%M:%S UTC")
+                                    .to_string()
+                                    .dimmed()
+                            );
+                            if i < wallets.len() - 1 {
+                                println!();
+                            }
+                        }
+
+                        println!(
+                            "\n{}",
+                            "💡 Use 'quantus wallet view --name <wallet>' to see full details"
+                                .dimmed()
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("{}", format!("❌ Failed to list wallets: {}", e).red());
+                    return Err(e);
+                }
+            }
+
             Ok(())
         }
 

@@ -41,6 +41,13 @@ console = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 
+# Quantum-Safe Encryption
+aes-gcm = "0.10" # AES-256-GCM (quantum-safe with 256-bit keys)
+argon2 = "0.5"   # Password-based key derivation (quantum-safe)
+rand = "0.8"
+zeroize = "1.7"  # Secure memory clearing
+# pqcrypto-kyber = "0.7"  # Reserved for future ML-KEM implementation
+
 [dev-dependencies]
 tempfile = "3.8"
 
