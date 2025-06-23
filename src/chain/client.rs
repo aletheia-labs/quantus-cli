@@ -12,6 +12,8 @@ use substrate_api_client::{
 };
 
 /// Macro to submit any type of extrinsic without code duplication
+/// Note: This should be a method but it seems impossible to figure out the correct parameter types for this call.
+/// Extrinsics are more lenient with typing.
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
         // Convert our QuantumKeyPair to ResonancePair
@@ -168,23 +170,22 @@ impl ChainClient {
             ))
         })?;
 
-        // // Convert our QuantumKeyPair to ResonancePair
-        // let resonance_pair = from_keypair.to_resonance_pair().map_err(|e| {
-        //     crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
-        // })?;
+        // Convert our QuantumKeyPair to ResonancePair
+        let resonance_pair = from_keypair.to_resonance_pair().map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
+        })?;
 
-        // // Create ExtrinsicSigner
-        // let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+        // Create ExtrinsicSigner
+        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
 
-        // // Clone the API to set the signer
-        // let mut api_with_signer = self.api.clone();
-        // api_with_signer.set_signer(extrinsic_signer);
+        // Clone the API to set the signer
+        let mut api_with_signer = self.api.clone();
+        api_with_signer.set_signer(extrinsic_signer);
 
         log_verbose!("✍️  Creating balance transfer extrinsic...");
 
         // Create the transfer extrinsic using BalancesExtrinsics trait
-        let transfer_extrinsic = self
-            .api
+        let transfer_extrinsic = api_with_signer
             .balance_transfer_allow_death(to_account_id.into(), amount)
             .await
             .ok_or_else(|| {
