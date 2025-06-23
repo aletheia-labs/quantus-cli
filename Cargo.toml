@@ -12,15 +12,9 @@ name = "quantus"
 path = "src/main.rs"
 
 [dependencies]
-# Quantus
-rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-dilithium" }
-rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-hdwallet" }
-poseidon-resonance = { version = "0.6.0", git = "https://github.com/Quantus-Network/poseidon-resonance" }
-sp-core = "35.0.0"
-
 # CLI and async runtime
-clap = { version = "4.5", features = ["derive"] }
-tokio = { version = "1.24", features = ["rt-multi-thread", "macros", "time"] }
+clap = { version = "4.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
 
 # Serialization and configuration
 serde = { version = "1.0", features = ["derive"] }
@@ -40,13 +34,34 @@ console = "0.15"
 # Additional utilities
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
+hex = "0.4"
 
 # Quantum-Safe Encryption
 aes-gcm = "0.10" # AES-256-GCM (quantum-safe with 256-bit keys)
 argon2 = "0.5"   # Password-based key derivation (quantum-safe)
 rand = "0.8"
 zeroize = "1.7"  # Secure memory clearing
-# pqcrypto-kyber = "0.7"  # Reserved for future ML-KEM implementation
+
+# Quantus crypto dependencies
+rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-dilithium" }
+rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-hdwallet" }
+# dilithium-crypto = { git = "https://github.com/Quantus-Network/chain", default-features = false, features = [
+#     "std",
+#     "full_crypto",
+# ] }
+poseidon-resonance = { git = "https://github.com/Quantus-Network/poseidon-resonance", features = ["serde"] }
+dilithium-crypto = { git = "https://github.com/Quantus-Network/chain", package = "dilithium-crypto" }
+
+# Blockchain and RPC client
+# Note: We use our own modified version of substrate-api-client to support Dilithium crypto
+substrate-api-client = { git = "https://github.com/Quantus-Network/resonance-api-client", package = "substrate-api-client" }
+jsonrpsee = { version = "0.24", features = ["async-client", "client-ws-transport-tls", "http-client", "ws-client"] }
+sp-core = { version = "35.0" }
+sp-runtime = { version = "40.1" }
+sp-crypto-hashing = { version = "0.1.0" }
+codec = { package = "parity-scale-codec", version = "3.7", features = ["derive"] }
+scale-info = { version = "2.1", features = ["derive"] }
+primitive-types = { version = "0.13", features = ["serde", "scale-info"] }
 
 [dev-dependencies]
 tempfile = "3.8"

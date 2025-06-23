@@ -34,6 +34,15 @@ pub enum QuantusError {
     /// Generic errors
     #[error("Error: {0}")]
     Generic(String),
+
+    #[error("Invalid key format: {0}")]
+    InvalidKeyFormat(String),
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    #[error("Insufficient balance: available {available}, required {required}")]
+    InsufficientBalance { available: u128, required: u128 },
 }
 
 /// Wallet-specific errors

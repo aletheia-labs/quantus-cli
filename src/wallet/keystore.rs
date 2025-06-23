@@ -90,6 +90,18 @@ pub struct WalletData {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
+impl WalletData {
+    /// Decrypt the keypair using the provided password
+    /// Note: This is a placeholder implementation since WalletData in our current design
+    /// stores the keypair in plain text. In a real implementation, we'd need to store
+    /// encrypted keypair data and decrypt it here.
+    pub fn decrypt_keypair(&self, _password: &str) -> crate::error::Result<&QuantumKeyPair> {
+        // For now, just return the keypair since it's already decrypted
+        // In a real implementation, this would decrypt the stored keypair data
+        Ok(&self.keypair)
+    }
+}
+
 /// Keystore manager for handling encrypted wallet storage
 pub struct Keystore {
     storage_path: std::path::PathBuf,

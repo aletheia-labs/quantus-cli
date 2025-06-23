@@ -7,6 +7,7 @@
 /// - Managing RPC connections
 pub mod client;
 pub mod extrinsics;
+pub mod quantus_runtime_config;
 
 use crate::error::Result;
 
