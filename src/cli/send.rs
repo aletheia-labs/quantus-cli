@@ -48,6 +48,8 @@ pub async fn handle_send_command(
     to_address: String,
     amount_str: &str,
     node_url: &str,
+    password: Option<String>,
+    password_file: Option<String>,
 ) -> Result<()> {
     // Create chain client early to get formatting
     let chain_client = ChainClient::new(node_url).await?;
@@ -61,12 +63,12 @@ pub async fn handle_send_command(
         to_address.bright_green()
     );
 
-    // Get password securely for decryption
-    let password = get_password_from_user(&format!("Enter password for wallet '{}'", from_wallet))?;
+    // Get password securely for decryption (with convenience options)
+    let wallet_password = get_wallet_password(&from_wallet, password, password_file)?;
 
     // Load and decrypt the sender wallet
     let wallet_manager = WalletManager::new()?;
-    let wallet_data = wallet_manager.load_wallet(&from_wallet, &password)?;
+    let wallet_data = wallet_manager.load_wallet(&from_wallet, &wallet_password)?;
 
     log_verbose!("📦 Using wallet: {}", from_wallet.bright_blue().bold());
 
@@ -147,6 +149,61 @@ pub async fn handle_send_command(
     }
 
     Ok(())
+}
+
+/// Get wallet password with convenience options
+fn get_wallet_password(
+    wallet_name: &str,
+    password: Option<String>,
+    password_file: Option<String>,
+) -> Result<String> {
+    // Option 1: Use CLI password flag if provided
+    if let Some(pwd) = password {
+        log_verbose!("🔑 Using password from --password flag");
+        return Ok(pwd);
+    }
+
+    // Option 2: Read password from file if provided
+    if let Some(file_path) = password_file {
+        log_verbose!("🔑 Reading password from file: {}", file_path);
+        let pwd = std::fs::read_to_string(&file_path)
+            .map_err(|e| {
+                crate::error::QuantusError::Generic(format!(
+                    "Failed to read password file '{}': {}",
+                    file_path, e
+                ))
+            })?
+            .trim()
+            .to_string();
+        return Ok(pwd);
+    }
+
+    // Option 3: Check environment variable
+    if let Ok(env_password) = std::env::var("QUANTUS_WALLET_PASSWORD") {
+        log_verbose!("🔑 Using password from QUANTUS_WALLET_PASSWORD environment variable");
+        return Ok(env_password);
+    }
+
+    // Option 4: Check for wallet-specific environment variable
+    let wallet_env_var = format!("QUANTUS_WALLET_PASSWORD_{}", wallet_name.to_uppercase());
+    if let Ok(env_password) = std::env::var(&wallet_env_var) {
+        log_verbose!(
+            "🔑 Using password from {} environment variable",
+            wallet_env_var
+        );
+        return Ok(env_password);
+    }
+
+    // Option 5: Try empty password first (for development wallets)
+    log_verbose!("🔑 Trying empty password first...");
+    let wallet_manager = WalletManager::new()?;
+    if let Ok(_) = wallet_manager.load_wallet(wallet_name, "") {
+        log_verbose!("✅ Empty password works for wallet '{}'", wallet_name);
+        return Ok("".to_string());
+    }
+
+    // Option 6: Prompt user for password
+    get_password_from_user(&format!("Enter password for wallet '{}'", wallet_name))
 }
 
 /// Get password from user securely

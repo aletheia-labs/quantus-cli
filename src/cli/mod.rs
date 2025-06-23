@@ -24,6 +24,14 @@ pub enum Commands {
         /// Wallet name to send from
         #[arg(short, long)]
         from: String,
+
+        /// Password for the wallet (or use environment variables)
+        #[arg(short, long)]
+        password: Option<String>,
+
+        /// Read password from file (for scripting)
+        #[arg(long)]
+        password_file: Option<String>,
     },
 
     /// Query account balance
@@ -55,9 +63,13 @@ pub enum DeveloperCommands {
 pub async fn execute_command(command: Commands, node_url: &str) -> crate::error::Result<()> {
     match command {
         Commands::Wallet(wallet_cmd) => wallet::handle_wallet_command(wallet_cmd, node_url).await,
-        Commands::Send { to, amount, from } => {
-            send::handle_send_command(from, to, &amount, node_url).await
-        }
+        Commands::Send {
+            to,
+            amount,
+            from,
+            password,
+            password_file,
+        } => send::handle_send_command(from, to, &amount, node_url, password, password_file).await,
         Commands::Balance { address } => handle_balance_command(address, node_url).await,
         Commands::Developer(dev_cmd) => handle_developer_command(dev_cmd, node_url).await,
         Commands::System => handle_system_command(node_url).await,
