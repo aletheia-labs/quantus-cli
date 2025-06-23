@@ -10,7 +10,7 @@ use substrate_api_client::{
     ac_primitives::{Config, ExtrinsicSigner, UncheckedExtrinsic},
     extrinsic::BalancesExtrinsics,
     rpc::JsonrpseeClient,
-    Api, GetAccountInformation, SubmitAndWatch, TransactionStatus, XtStatus,
+    Api, GetAccountInformation, SubmitAndWatch, SystemApi, TransactionStatus, XtStatus,
 };
 
 /// Chain client for interacting with the Quantus network
@@ -200,6 +200,95 @@ impl ChainClient {
             tx_hash.bright_green()
         );
         Ok(true)
+    }
+
+    /// Get chain properties including token decimals
+    pub async fn get_chain_properties(&self) -> Result<(String, u8)> {
+        log_verbose!("🔍 Querying chain properties...");
+
+        // Get system properties from the chain
+        let properties = self.api.get_system_properties().await.map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!(
+                "Failed to get system properties: {:?}",
+                e
+            ))
+        })?;
+
+        log_verbose!("📊 Chain properties: {:?}", properties);
+
+        // Extract token symbol and decimals from properties
+        // Handle both direct values and arrays (different chains may use different formats)
+        let token_symbol = properties
+            .get("tokenSymbol")
+            .and_then(|v| {
+                // Try direct string first
+                if let Some(s) = v.as_str() {
+                    Some(s)
+                } else {
+                    // Try array format (some chains use arrays)
+                    v.as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|v| v.as_str())
+                }
+            })
+            .unwrap_or("QUAN")
+            .to_string();
+
+        let token_decimals = properties
+            .get("tokenDecimals")
+            .and_then(|v| {
+                // Try direct number first
+                if let Some(n) = v.as_u64() {
+                    Some(n)
+                } else {
+                    // Try array format (some chains use arrays)
+                    v.as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|v| v.as_u64())
+                }
+            })
+            .unwrap_or(12) as u8; // Default to 12 decimals if not found
+
+        log_verbose!(
+            "💰 Token: {} with {} decimals",
+            token_symbol,
+            token_decimals
+        );
+
+        Ok((token_symbol, token_decimals))
+    }
+
+    /// Format balance with proper decimals
+    pub fn format_balance(amount: u128, decimals: u8) -> String {
+        if decimals == 0 {
+            return amount.to_string();
+        }
+
+        let divisor = 10_u128.pow(decimals as u32);
+        let whole_part = amount / divisor;
+        let fractional_part = amount % divisor;
+
+        if fractional_part == 0 {
+            whole_part.to_string()
+        } else {
+            // Format fractional part with proper leading zeros
+            let fractional_str = format!("{:0width$}", fractional_part, width = decimals as usize);
+            // Remove trailing zeros
+            let fractional_str = fractional_str.trim_end_matches('0');
+
+            if fractional_str.is_empty() {
+                whole_part.to_string()
+            } else {
+                format!("{}.{}", whole_part, fractional_str)
+            }
+        }
+    }
+
+    /// Format balance with token symbol
+    pub async fn format_balance_with_symbol(&self, amount: u128) -> Result<String> {
+        let (symbol, decimals) = self.get_chain_properties().await?;
+        let formatted_amount = Self::format_balance(amount, decimals);
+        Ok(format!("{} {}", formatted_amount, symbol))
     }
 }
 

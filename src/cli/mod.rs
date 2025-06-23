@@ -86,10 +86,9 @@ async fn handle_balance_command(address: String, node_url: &str) -> crate::error
     // Query balance
     let balance = client.get_balance(&address).await?;
 
-    log_print!(
-        "✅ Balance: {} tokens",
-        balance.to_string().bright_yellow().bold()
-    );
+    // Format balance with proper decimals and symbol
+    let formatted_balance = client.format_balance_with_symbol(balance).await?;
+    log_print!("✅ Balance: {}", formatted_balance.bright_yellow().bold());
 
     Ok(())
 }

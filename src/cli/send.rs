@@ -13,10 +13,15 @@ pub async fn handle_send_command(
     amount: u128,
     node_url: &str,
 ) -> Result<()> {
+    // Create chain client early to get formatting
+    let chain_client = ChainClient::new(node_url).await?;
+
+    // Format the amount being sent
+    let formatted_amount = chain_client.format_balance_with_symbol(amount).await?;
     log_verbose!(
-        "🚀 {} Sending {} tokens to {}",
+        "🚀 {} Sending {} to {}",
         "SEND".bright_cyan().bold(),
-        amount.to_string().bright_yellow().bold(),
+        formatted_amount.bright_yellow().bold(),
         to_address.bright_green()
     );
 
@@ -32,17 +37,15 @@ pub async fn handle_send_command(
     // Get the keypair (already decrypted)
     let keypair = &wallet_data.keypair;
 
-    // Create chain client
-    let chain_client = ChainClient::new(node_url).await?;
+    // Chain client already created above
 
     // Get account information
     let from_account_id = keypair.to_account_id_ss58check();
     let balance = chain_client.get_balance(&from_account_id).await?;
 
-    log_verbose!(
-        "💰 Current balance: {} tokens",
-        balance.to_string().bright_yellow()
-    );
+    // Get formatted balance with proper decimals
+    let formatted_balance = chain_client.format_balance_with_symbol(balance).await?;
+    log_verbose!("💰 Current balance: {}", formatted_balance.bright_yellow());
 
     if balance < amount {
         return Err(crate::error::QuantusError::InsufficientBalance {
@@ -75,12 +78,10 @@ pub async fn handle_send_command(
             "FINALIZED".bright_green().bold()
         );
 
-        // Show updated balance
+        // Show updated balance with proper formatting
         let new_balance = chain_client.get_balance(&from_account_id).await?;
-        log_print!(
-            "💰 New balance: {} tokens",
-            new_balance.to_string().bright_yellow()
-        );
+        let formatted_new_balance = chain_client.format_balance_with_symbol(new_balance).await?;
+        log_print!("💰 New balance: {}", formatted_new_balance.bright_yellow());
     } else {
         log_error!("Transaction failed!");
     }
