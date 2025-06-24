@@ -9,8 +9,7 @@ use crate::{
 use codec::Compact;
 use colored::Colorize;
 use serde_json::Value;
-use sp_core::crypto::{AccountId32, Ss58Codec};
-use sp_runtime::MultiAddress;
+use sp_core::crypto::Ss58Codec;
 
 // Import necessary substrate-api-client types
 use substrate_api_client::{SubmitAndWatch, XtStatus};
@@ -603,6 +602,7 @@ async fn submit_extrinsic(
 
 /// Represents a parsed argument with its type information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ParsedArgument {
     AccountId(sp_core::crypto::AccountId32),
     Balance(u128),

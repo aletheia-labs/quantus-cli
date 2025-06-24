@@ -206,30 +206,6 @@ async fn handle_generic_call_command(
     .await
 }
 
-/// Handle the balance query command
-async fn handle_balance_command(address: String, node_url: &str) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
-
-    log_verbose!(
-        "💰 {} Querying balance for address",
-        "BALANCE".bright_cyan().bold()
-    );
-    log_verbose!("🔍 Address: {}", address.bright_green());
-
-    // Create chain client
-    let client = ChainClient::new(node_url).await?;
-
-    // Query balance
-    let balance = client.get_balance(&address).await?;
-
-    // Format balance with proper decimals and symbol
-    let formatted_balance = client.format_balance_with_symbol(balance).await?;
-    log_print!("✅ Balance: {}", formatted_balance.bright_yellow().bold());
-
-    Ok(())
-}
-
 /// Handle the system info command
 async fn handle_system_command(node_url: &str) -> crate::error::Result<()> {
     use crate::chain::client::ChainClient;
