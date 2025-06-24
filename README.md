@@ -5,7 +5,9 @@ A modern command line interface for interacting with the Quantus Network, featur
 ## 🌟 Features
 
 - **Quantum-Safe Wallets**: Built with Dilithium post-quantum cryptography
+- **Generic Pallet Calls**: Call ANY blockchain function using metadata-driven parsing
 - **Real Chain Operations**: Send tokens, query balances, explore metadata
+- **Smart Type Detection**: Automatic parsing of addresses, balances, and data types
 - **Developer Tools**: Pre-built test wallets and utilities
 - **Modern CLI**: Built with Rust and Clap for excellent UX
 - **Cross-Platform**: Runs on macOS, Linux, and Windows
@@ -43,6 +45,9 @@ quantus balance --address 5H7DdvKue19FQZpRKc2hmBfSBGEczwvdnVYDNZC3W95UDyGP
 
 # Send tokens
 quantus send --from crystal_alice --to 5H7DdvKue19FQZpRKc2hmBfSBGEczwvdnVYDNZC3W95UDyGP --amount 10.5
+
+# Call any blockchain function generically
+quantus call --pallet Balances --call transfer_allow_death --args '["5H7DdvKue19FQZpRKc2hmBfSBGEczwvdnVYDNZC3W95UDyGP", "5"]' --from crystal_alice
 
 # Explore the blockchain
 quantus metadata --no-docs
@@ -350,14 +355,20 @@ quantus balance --address 5H7DdvKue19FQZpRKc2hmBfSBGEczwvdnVYDNZC3W95UDyGP
 # 3. Create your own wallet
 quantus wallet create --name my-production-wallet
 
-# 4. Send some test tokens
+# 4. Send some test tokens (traditional way)
 quantus send --from crystal_alice --to my-production-wallet --amount 100 --verbose
+
+# 4b. Or use the generic call interface
+quantus call --pallet Balances --call transfer_allow_death --args '["my-production-wallet", "50"]' --from crystal_alice
 
 # 5. Verify the transfer
 quantus balance --address $(quantus wallet view --name my-production-wallet | grep Address | cut -d' ' -f2)
 
 # 6. Explore what else you can do
 quantus metadata --no-docs
+
+# 7. Try other generic calls
+quantus call --pallet System --call remark --args '["0x48656c6c6f20576f726c64"]' --from crystal_alice
 ```
 
 ### Scripting Example
@@ -399,15 +410,6 @@ done
 - **Extensible Architecture**: Macro-based extrinsic submission supports any pallet
 
 ## 🛠️ Current Status
-
-**✅ Fully Implemented:**
-- Complete wallet management (create, view, list, export, import, delete)
-- Real token transfers with fee calculation
-- Balance queries with proper formatting
-- Chain metadata exploration
-- Developer test wallet utilities
-- Password convenience features
-- Progress indicators and verbose logging
 
 **🔮 Architecture Ready For:**
 - Additional pallet integrations (staking, governance, etc.)
@@ -451,5 +453,3 @@ The Quantus CLI is a **production-ready** tool that:
 - Keep your private keys secure
 
 ---
-
-🚀 **Ready to explore the quantum future of blockchain!** 🚀 

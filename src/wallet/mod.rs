@@ -6,6 +6,7 @@
 /// - Encrypting/decrypting wallet data
 /// - Managing multiple wallets
 pub mod keystore;
+pub mod password;
 
 use crate::error::{Result, WalletError};
 pub use keystore::{Keystore, QuantumKeyPair, WalletData};
@@ -615,9 +616,9 @@ mod tests {
         assert!(wallet_names.contains(&&"wallet-2".to_string()));
         assert!(wallet_names.contains(&&"imported-wallet".to_string()));
 
-        // Check that addresses are encrypted in list view
+        // Check that addresses are real addresses (now stored unencrypted)
         for wallet in &wallets {
-            assert_eq!(wallet.address, "[Encrypted - Use 'view' command]");
+            assert!(wallet.address.starts_with("5")); // Real SS58 addresses start with 5
             assert_eq!(wallet.key_type, "Dilithium ML-DSA-87");
         }
 
@@ -643,7 +644,7 @@ mod tests {
             .expect("Wallet should exist");
 
         assert_eq!(wallet_info.name, "test-get-wallet");
-        assert_eq!(wallet_info.address, "[Password required]");
+        assert_eq!(wallet_info.address, created_wallet.address); // Now returns real address
 
         // Test getting wallet with wrong password
         // Now with real quantum-safe encryption, wrong password should be detected

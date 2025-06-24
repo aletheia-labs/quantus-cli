@@ -1,5 +1,4 @@
 use super::quantus_runtime_config::QuantusRuntimeConfig;
-/// Chain client for interacting with the Quantus network
 use crate::error::Result;
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
@@ -14,6 +13,7 @@ use substrate_api_client::{
 /// Macro to submit any type of extrinsic without code duplication
 /// Note: This should be a method but it seems impossible to figure out the correct parameter types for this call.
 /// Extrinsics are more lenient with typing.
+#[macro_export]
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
         // Convert our QuantumKeyPair to ResonancePair
@@ -69,9 +69,54 @@ macro_rules! submit_extrinsic {
     }};
 }
 
+/// Submit extrinsic with spinner - wrapper around submit_extrinsic! that shows a spinner
+#[macro_export]
+macro_rules! submit_extrinsic_with_spinner {
+    ($self:expr, $keypair:expr, $extrinsic:expr) => {{
+        use crate::cli::progress_spinner::ProgressSpinner;
+        use crate::{log_error, log_print, log_success};
+        use colored::Colorize;
+        use std::io::{self, Write};
+        use tokio::time::{self, Duration};
+
+        // Show spinner during the potentially slow network submission
+        let mut spinner = ProgressSpinner::new();
+
+        // Create a task that shows the spinner while waiting for network
+        let spinner_handle = tokio::spawn(async move {
+            let wait_duration = Duration::from_millis(200);
+            loop {
+                spinner.tick();
+                time::sleep(wait_duration).await;
+            }
+        });
+
+        // Submit the extrinsic using the core macro
+        let result = crate::submit_extrinsic!($self, $keypair, $extrinsic);
+
+        // Stop the spinner and clear the line
+        spinner_handle.abort();
+        print!("\r                                                    \r");
+        io::stdout().flush().unwrap();
+
+        // Handle result and show appropriate message
+        match result {
+            Ok(tx_hash) => {
+                log_success!("🎉 Transaction submitted successfully!");
+                log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
+                Ok(tx_hash)
+            }
+            Err(e) => {
+                log_error!("❌ Transaction failed: {}", e);
+                Err(e)
+            }
+        }
+    }};
+}
+
 /// Chain client for interacting with the Quantus network
 pub struct ChainClient {
-    api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
+    pub(crate) api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
 }
 
 impl ChainClient {
@@ -140,9 +185,27 @@ impl ChainClient {
     pub async fn get_system_info(&self) -> Result<()> {
         log_verbose!("🔍 Querying system information...");
 
-        // For now, just print a placeholder - we'll implement proper system queries later
-        log_print!("🏗️  Chain: Quantus DevNet");
-        log_print!("🔧 Using substrate-api-client");
+        // Get chain properties
+        let (token_symbol, token_decimals) = self.get_chain_properties().await?;
+
+        // Get metadata information
+        let metadata = self.api.metadata();
+        let pallets: Vec<_> = metadata.pallets().collect();
+
+        log_print!("🏗️  Chain System Information:");
+        log_print!(
+            "   💰 Token: {} ({} decimals)",
+            token_symbol.bright_yellow(),
+            token_decimals.to_string().bright_cyan()
+        );
+        log_print!(
+            "   📦 Pallets: {} available",
+            pallets.len().to_string().bright_green()
+        );
+        log_print!("   🔧 Runtime: Substrate-based");
+        log_print!("   🌐 Network: Quantus Network");
+
+        log_verbose!("💡 Use 'quantus metadata' to explore all available pallets and calls");
 
         Ok(())
     }
@@ -197,7 +260,7 @@ impl ChainClient {
         log_verbose!("📋 Extrinsic created: {:?}", transfer_extrinsic);
 
         // Use the macro to submit the extrinsic
-        submit_extrinsic!(self, from_keypair, transfer_extrinsic)
+        submit_extrinsic_with_spinner!(self, from_keypair, transfer_extrinsic)
     }
 
     /// Wait for transaction finalization - now using real block monitoring
@@ -538,6 +601,27 @@ impl ChainClient {
         let raw_amount = self.parse_amount(amount_str).await?;
         let formatted = self.format_balance_with_symbol(raw_amount).await?;
         Ok((raw_amount, formatted))
+    }
+
+    /// Get access to the API for generic calls using compose macros
+    pub fn get_api(&self) -> &Api<QuantusRuntimeConfig, JsonrpseeClient> {
+        &self.api
+    }
+
+    /// Create an API instance with a signer for generic calls
+    pub fn create_api_with_signer(
+        &self,
+        keypair: &QuantumKeyPair,
+    ) -> Result<Api<QuantusRuntimeConfig, JsonrpseeClient>> {
+        let resonance_pair = keypair.to_resonance_pair().map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
+        })?;
+
+        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+        let mut api_with_signer = self.api.clone();
+        api_with_signer.set_signer(extrinsic_signer);
+
+        Ok(api_with_signer)
     }
 }
 

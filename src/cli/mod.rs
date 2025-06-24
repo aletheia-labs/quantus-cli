@@ -1,6 +1,9 @@
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
+use colored::Colorize;
 
+pub mod generic_call;
+pub mod progress_spinner;
 pub mod send;
 pub mod wallet;
 
@@ -32,6 +35,45 @@ pub enum Commands {
         /// Read password from file (for scripting)
         #[arg(long)]
         password_file: Option<String>,
+    },
+
+    /// Generic extrinsic call - call ANY pallet function!
+    Call {
+        /// Pallet name (e.g., "Balances")
+        #[arg(long)]
+        pallet: String,
+
+        /// Call/function name (e.g., "transfer_allow_death")
+        #[arg(short, long)]
+        call: String,
+
+        /// Arguments as JSON array (e.g., '["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "1000000000000"]')
+        #[arg(short, long)]
+        args: Option<String>,
+
+        /// Wallet name to sign with
+        #[arg(short, long)]
+        from: String,
+
+        /// Password for the wallet
+        #[arg(short, long)]
+        password: Option<String>,
+
+        /// Read password from file
+        #[arg(long)]
+        password_file: Option<String>,
+
+        /// Optional tip amount to prioritize the transaction
+        #[arg(long)]
+        tip: Option<String>,
+
+        /// Create offline extrinsic without submitting
+        #[arg(long)]
+        offline: bool,
+
+        /// Output the call as hex-encoded data only
+        #[arg(long)]
+        call_data_only: bool,
     },
 
     /// Query account balance
@@ -71,87 +113,120 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
     match command {
         Commands::Wallet(wallet_cmd) => wallet::handle_wallet_command(wallet_cmd, node_url).await,
         Commands::Send {
+            from,
             to,
             amount,
-            from,
             password,
             password_file,
         } => send::handle_send_command(from, to, &amount, node_url, password, password_file).await,
-        Commands::Balance { address } => handle_balance_command(address, node_url).await,
-        Commands::Developer(dev_cmd) => handle_developer_command(dev_cmd, node_url).await,
-        Commands::System => handle_system_command(node_url).await,
-        Commands::Metadata { no_docs } => handle_metadata_command(node_url, no_docs).await,
+        Commands::Call {
+            pallet,
+            call,
+            args,
+            from,
+            password,
+            password_file,
+            tip,
+            offline,
+            call_data_only,
+        } => {
+            handle_generic_call_command(
+                pallet,
+                call,
+                args,
+                from,
+                password,
+                password_file,
+                tip,
+                offline,
+                call_data_only,
+                node_url,
+            )
+            .await
+        }
+        Commands::Balance { address } => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            let balance = chain_client.get_balance(&address).await?;
+            let formatted_balance = chain_client.format_balance_with_symbol(balance).await?;
+            log_print!("💰 Balance: {}", formatted_balance);
+            Ok(())
+        }
+        Commands::Developer(dev_cmd) => match dev_cmd {
+            DeveloperCommands::CreateTestWallets => {
+                let _ = crate::cli::handle_developer_command(
+                    DeveloperCommands::CreateTestWallets,
+                    node_url,
+                )
+                .await;
+                Ok(())
+            }
+        },
+        Commands::System => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            chain_client.get_system_info().await
+        }
+        Commands::Metadata { no_docs } => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            chain_client.explore_chain_metadata(no_docs).await
+        }
         Commands::Version => {
-            log_print!("Quantus CLI v{}", env!("CARGO_PKG_VERSION"));
-            log_print!("Build: {}", env!("CARGO_PKG_DESCRIPTION"));
+            log_print!(
+                "🔬 {} v{}",
+                "Quantus CLI".bright_cyan().bold(),
+                env!("CARGO_PKG_VERSION").bright_yellow()
+            );
+            log_print!("🏗️  Built with Rust and love for quantum-safe blockchain");
             Ok(())
         }
     }
 }
 
-/// Handle the balance query command
-async fn handle_balance_command(address: String, node_url: &str) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
+/// Handle generic extrinsic call command
+async fn handle_generic_call_command(
+    pallet: String,
+    call: String,
+    args: Option<String>,
+    from: String,
+    _password: Option<String>,
+    _password_file: Option<String>,
+    tip: Option<String>,
+    offline: bool,
+    call_data_only: bool,
+    node_url: &str,
+) -> crate::error::Result<()> {
+    // For now, we only support live submission (not offline or call-data-only)
+    if offline {
+        log_error!("❌ Offline mode is not yet implemented");
+        log_print!("💡 Currently only live submission is supported");
+        return Ok(());
+    }
 
-    log_verbose!(
-        "💰 {} Querying balance for address",
-        "BALANCE".bright_cyan().bold()
-    );
-    log_verbose!("🔍 Address: {}", address.bright_green());
+    if call_data_only {
+        log_error!("❌ Call data only mode is not yet implemented");
+        log_print!("💡 Currently only live submission is supported");
+        return Ok(());
+    }
 
-    // Create chain client
-    let client = ChainClient::new(node_url).await?;
-
-    // Query balance
-    let balance = client.get_balance(&address).await?;
-
-    // Format balance with proper decimals and symbol
-    let formatted_balance = client.format_balance_with_symbol(balance).await?;
-    log_print!("✅ Balance: {}", formatted_balance.bright_yellow().bold());
-
-    Ok(())
-}
-
-/// Handle the system info command
-async fn handle_system_command(node_url: &str) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
-
-    log_verbose!(
-        "🔍 {} Querying system information",
-        "SYSTEM".bright_cyan().bold()
-    );
-
-    // Create chain client
-    let client = ChainClient::new(node_url).await?;
-
-    // Query system info
-    client.get_system_info().await?;
-
-    Ok(())
-}
-
-/// Handle the metadata exploration command
-async fn handle_metadata_command(node_url: &str, no_docs: bool) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
-
-    log_verbose!(
-        "🔍 {} Exploring chain metadata",
-        "METADATA".bright_cyan().bold()
-    );
+    // Parse arguments if provided
+    let parsed_args: Vec<serde_json::Value> = if let Some(args_str) = args {
+        match serde_json::from_str(&args_str) {
+            Ok(args) => args,
+            Err(e) => {
+                log_error!("Failed to parse arguments as JSON: {}", e);
+                log_print!("Expected format: '[\"arg1\", \"arg2\", ...]'");
+                return Ok(());
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
     // Create chain client
-    let client = ChainClient::new(node_url).await?;
+    let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
 
-    // Explore chain metadata
-    client.explore_chain_metadata(no_docs).await?;
-
-    Ok(())
+    // Execute the generic call
+    generic_call::execute_generic_call(&chain_client, &pallet, &call, parsed_args, &from, tip).await
 }
-
-/// Handle developer commands
 async fn handle_developer_command(
     command: DeveloperCommands,
     _node_url: &str,
@@ -210,11 +285,6 @@ async fn handle_developer_command(
             log_print!("   quantus send --from crystal_bob --to <address> --amount 1000");
             log_print!("   quantus send --from crystal_charlie --to <address> --amount 1000");
             log_print!("");
-            log_print!(
-                "🔑 {} All test wallets use password: {}",
-                "NOTE".bright_blue().bold(),
-                "test123".bright_yellow()
-            );
 
             Ok(())
         }
