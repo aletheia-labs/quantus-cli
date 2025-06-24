@@ -152,9 +152,11 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
         }
         Commands::Developer(dev_cmd) => match dev_cmd {
             DeveloperCommands::CreateTestWallets => {
-                // TODO: Implement test wallet creation
-                log_print!("🧪 Creating test wallets...");
-                log_print!("This functionality will be implemented soon!");
+                let _ = crate::cli::handle_developer_command(
+                    DeveloperCommands::CreateTestWallets,
+                    node_url,
+                )
+                .await;
                 Ok(())
             }
         },
@@ -205,46 +207,6 @@ async fn handle_generic_call_command(
     )
     .await
 }
-
-/// Handle the system info command
-async fn handle_system_command(node_url: &str) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
-
-    log_verbose!(
-        "🔍 {} Querying system information",
-        "SYSTEM".bright_cyan().bold()
-    );
-
-    // Create chain client
-    let client = ChainClient::new(node_url).await?;
-
-    // Query system info
-    client.get_system_info().await?;
-
-    Ok(())
-}
-
-/// Handle the metadata exploration command
-async fn handle_metadata_command(node_url: &str, no_docs: bool) -> crate::error::Result<()> {
-    use crate::chain::client::ChainClient;
-    use colored::Colorize;
-
-    log_verbose!(
-        "🔍 {} Exploring chain metadata",
-        "METADATA".bright_cyan().bold()
-    );
-
-    // Create chain client
-    let client = ChainClient::new(node_url).await?;
-
-    // Explore chain metadata
-    client.explore_chain_metadata(no_docs).await?;
-
-    Ok(())
-}
-
-/// Handle developer commands
 async fn handle_developer_command(
     command: DeveloperCommands,
     _node_url: &str,

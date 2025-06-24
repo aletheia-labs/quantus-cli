@@ -60,6 +60,7 @@ impl QuantumKeyPair {
         })
     }
 
+    #[allow(dead_code)]
     pub fn from_resonance_pair(keypair: &ResonancePair) -> Self {
         Self {
             public_key: keypair.public.as_ref().to_vec(),
