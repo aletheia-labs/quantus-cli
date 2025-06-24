@@ -2,7 +2,6 @@ use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
 
-pub mod compose_macros;
 pub mod generic_call;
 pub mod send;
 pub mod wallet;

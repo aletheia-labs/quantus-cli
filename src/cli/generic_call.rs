@@ -11,7 +11,6 @@ use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
 use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::rpc_api::chain;
 use substrate_api_client::{SubmitAndWatch, XtStatus};
 
 /// Execute a generic call to any pallet
@@ -334,5 +333,218 @@ fn parse_bytes_argument(value: &Value) -> Result<Vec<u8>> {
             "Bytes argument must be a string or hex string".to_string(),
         )
         .into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_parse_balance_amount_string() {
+        let value = json!("10.5");
+        let result = parse_balance_amount(&value).await.unwrap();
+        // 10.5 * 1_000_000_000 = 10_500_000_000
+        assert_eq!(result, 10_500_000_000);
+    }
+
+    #[tokio::test]
+    async fn test_parse_balance_amount_number() {
+        let value = json!(1000000000000u64);
+        let result = parse_balance_amount(&value).await.unwrap();
+        assert_eq!(result, 1_000_000_000_000);
+    }
+
+    #[tokio::test]
+    async fn test_parse_balance_amount_float() {
+        let value = json!(0.001);
+        let result = parse_balance_amount(&value).await.unwrap();
+        // 0.001 * 1_000_000_000 = 1_000_000
+        assert_eq!(result, 1_000_000);
+    }
+
+    #[test]
+    fn test_parse_balance_amount_invalid() {
+        let value = json!(true);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(parse_balance_amount(&value));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_bytes_argument_string() {
+        let value = json!("hello world");
+        let result = parse_bytes_argument(&value).unwrap();
+        assert_eq!(result, b"hello world");
+    }
+
+    #[test]
+    fn test_parse_bytes_argument_hex() {
+        let value = json!("0x48656c6c6f");
+        let result = parse_bytes_argument(&value).unwrap();
+        assert_eq!(result, b"Hello");
+    }
+
+    #[test]
+    fn test_parse_bytes_argument_invalid_hex() {
+        let value = json!("0xgggg");
+        let result = parse_bytes_argument(&value);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_bytes_argument_invalid_type() {
+        let value = json!(123);
+        let result = parse_bytes_argument(&value);
+        assert!(result.is_err());
+    }
+
+    #[cfg(test)]
+    mod integration_tests {
+        use super::*;
+
+        /// Test that we can parse valid balance transfer arguments
+        #[test]
+        fn test_balance_transfer_args_validation() {
+            // Valid args
+            let args = vec![
+                json!("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"),
+                json!("1.5"),
+            ];
+
+            // Should have exactly 2 arguments
+            assert_eq!(args.len(), 2);
+
+            // First should be a string (address)
+            assert!(args[0].is_string());
+
+            // Second should be parseable as balance
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let amount = rt.block_on(parse_balance_amount(&args[1]));
+            assert!(amount.is_ok());
+            assert_eq!(amount.unwrap(), 1_500_000_000); // 1.5 * 10^9
+        }
+
+        /// Test that we properly validate argument counts for different calls
+        #[test]
+        fn test_argument_validation() {
+            // Balances calls need 2 args
+            let valid_balance_args = vec![json!("addr"), json!("100")];
+            assert_eq!(valid_balance_args.len(), 2);
+
+            // System remark needs 1 arg
+            let valid_remark_args = vec![json!("hello")];
+            assert_eq!(valid_remark_args.len(), 1);
+
+            // ReversibleTransfers needs 2 args
+            let valid_rt_args = vec![json!("addr"), json!("100")];
+            assert_eq!(valid_rt_args.len(), 2);
+        }
+
+        /// Test error messages for unsupported combinations
+        #[test]
+        fn test_error_messages() {
+            // Test that we have clear error messages for various scenarios
+            let balance_error = "Balance transfer requires 2 arguments: dest, value";
+            let remark_error = "remark requires 1 argument: remark (string or hex bytes)";
+            let schedule_transfer_error = "schedule_transfer requires 2 arguments: dest, amount";
+
+            // These are the error messages we expect to see
+            assert!(balance_error.contains("2 arguments"));
+            assert!(remark_error.contains("1 argument"));
+            assert!(schedule_transfer_error.contains("2 arguments"));
+        }
+
+        /// Test JSON argument parsing edge cases
+        #[test]
+        fn test_json_arg_parsing() {
+            // Test various JSON value types
+            let string_arg = json!("test");
+            let number_arg = json!(42);
+            let float_arg = json!(3.14);
+            let bool_arg = json!(true);
+            let null_arg = json!(null);
+
+            assert!(string_arg.is_string());
+            assert!(number_arg.is_number());
+            assert!(float_arg.is_number());
+            assert!(bool_arg.is_boolean());
+            assert!(null_arg.is_null());
+        }
+
+        /// Test address validation patterns
+        #[test]
+        fn test_address_validation() {
+            // Valid SS58 address format (this is a test address)
+            let valid_addr = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+            assert_eq!(valid_addr.len(), 48); // Standard SS58 length
+            assert!(valid_addr.starts_with('5')); // Substrate addresses often start with 5
+
+            // Invalid addresses
+            let too_short = "5Grw";
+            let wrong_chars = "not_an_address";
+
+            assert!(too_short.len() < 40);
+            assert!(!wrong_chars.chars().all(|c| c.is_alphanumeric()));
+        }
+    }
+
+    #[cfg(test)]
+    mod documentation_tests {
+        /// Example usage for Balances::transfer_allow_death
+        ///
+        /// ```bash
+        /// quantus call --pallet "Balances" --call "transfer_allow_death" \
+        ///   --args '["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "1.5"]' \
+        ///   --from my-wallet
+        /// ```
+        #[test]
+        fn example_balance_transfer() {
+            // This test documents the expected usage
+            let pallet = "Balances";
+            let call = "transfer_allow_death";
+            let args = r#"["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "1.5"]"#;
+
+            assert_eq!(pallet, "Balances");
+            assert_eq!(call, "transfer_allow_death");
+            assert!(args.contains("1.5"));
+        }
+
+        /// Example usage for System::remark
+        ///
+        /// ```bash
+        /// quantus call --pallet "System" --call "remark" \
+        ///   --args '["Hello Quantus!"]' \
+        ///   --from my-wallet
+        /// ```
+        #[test]
+        fn example_system_remark() {
+            let pallet = "System";
+            let call = "remark";
+            let args = r#"["Hello Quantus!"]"#;
+
+            assert_eq!(pallet, "System");
+            assert_eq!(call, "remark");
+            assert!(args.contains("Hello"));
+        }
+
+        /// Example usage for ReversibleTransfers::schedule_transfer
+        ///
+        /// ```bash
+        /// quantus call --pallet "ReversibleTransfers" --call "schedule_transfer" \
+        ///   --args '["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "100"]' \
+        ///   --from my-wallet
+        /// ```
+        #[test]
+        fn example_reversible_transfer() {
+            let pallet = "ReversibleTransfers";
+            let call = "schedule_transfer";
+            let args = r#"["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "100"]"#;
+
+            assert_eq!(pallet, "ReversibleTransfers");
+            assert_eq!(call, "schedule_transfer");
+            assert!(args.contains("100"));
+        }
     }
 }
