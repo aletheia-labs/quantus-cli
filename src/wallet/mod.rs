@@ -6,6 +6,7 @@
 /// - Encrypting/decrypting wallet data
 /// - Managing multiple wallets
 pub mod keystore;
+pub mod password;
 
 use crate::error::{Result, WalletError};
 pub use keystore::{Keystore, QuantumKeyPair, WalletData};
