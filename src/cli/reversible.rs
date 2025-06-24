@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
+use qp_scheduler::BlockNumberOrTimestamp;
 use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
@@ -43,9 +44,13 @@ pub enum ReversibleCommands {
         #[arg(short, long)]
         amount: String,
 
-        /// Delay in blocks or milliseconds
+        /// Delay in seconds (default) or blocks if --unit-blocks is specified
         #[arg(short, long)]
         delay: u64,
+
+        /// Use blocks instead of seconds for delay
+        #[arg(long)]
+        unit_blocks: bool,
 
         /// Wallet name to send from
         #[arg(short, long)]
@@ -127,10 +132,20 @@ pub async fn handle_reversible_command(command: ReversibleCommands, node_url: &s
             to,
             amount,
             delay,
+            unit_blocks,
             from,
             password,
         } => {
-            schedule_transfer_with_delay(&chain_client, &to, &amount, delay, &from, password).await
+            schedule_transfer_with_delay(
+                &chain_client,
+                &to,
+                &amount,
+                delay,
+                unit_blocks,
+                &from,
+                password,
+            )
+            .await
         }
         ReversibleCommands::Cancel {
             tx_id,
@@ -157,15 +172,15 @@ async fn schedule_transfer(
     chain_client: &ChainClient,
     to: &str,
     amount: &str,
-    from: &str,
+    wallet_name: &str,
     password: Option<String>,
 ) -> Result<()> {
     log_print!("📅 Scheduling transfer");
     log_print!("To: {}", to.bright_green());
     log_print!("Amount: {}", amount.bright_cyan());
-    log_print!("From: {}", from.bright_yellow());
+    log_print!("From: {}", wallet_name.bright_yellow());
 
-    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
+    let keypair = crate::wallet::load_keypair_from_wallet(&wallet_name, password, None)?;
 
     // Parse destination address
     let dest_account = AccountId32::from_ss58check(to).map_err(|e| {
@@ -195,10 +210,13 @@ async fn schedule_transfer(
     })?;
 
     // Submit extrinsic with spinner
-    let tx_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
+    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
 
     log_success!("🎉 Transfer scheduled successfully!");
-    log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
+    log_print!(
+        "📋 Transaction hash: {}",
+        tx_report.extrinsic_hash.to_string().bright_yellow()
+    );
     log_print!("💡 Transfer will execute after the configured delay period");
 
     Ok(())
@@ -210,16 +228,26 @@ async fn schedule_transfer_with_delay(
     to: &str,
     amount: &str,
     delay: u64,
+    unit_blocks: bool,
     from: &str,
     password: Option<String>,
 ) -> Result<()> {
+    let unit_str = if unit_blocks { "blocks" } else { "seconds" };
     log_print!("📅 Scheduling transfer with custom delay");
     log_print!("To: {}", to.bright_green());
     log_print!("Amount: {}", amount.bright_cyan());
-    log_print!("Delay: {} blocks/ms", delay.to_string().bright_magenta());
+    log_print!("Delay: {} {}", delay.to_string().bright_magenta(), unit_str);
     log_print!("From: {}", from.bright_yellow());
 
     let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
+
+    // Convert delay to proper BlockNumberOrTimestamp
+    let delay_value = if unit_blocks {
+        BlockNumberOrTimestamp::BlockNumber(delay as u32)
+    } else {
+        // Convert seconds to milliseconds for the runtime
+        BlockNumberOrTimestamp::Timestamp(delay * 1000)
+    };
 
     // Parse destination address
     let dest_account = AccountId32::from_ss58check(to).map_err(|e| {
@@ -241,7 +269,7 @@ async fn schedule_transfer_with_delay(
         "schedule_transfer_with_delay",
         dest,
         amount_value,
-        delay
+        delay_value
     )
     .ok_or_else(|| {
         crate::error::QuantusError::Generic(
@@ -250,11 +278,14 @@ async fn schedule_transfer_with_delay(
     })?;
 
     // Submit extrinsic with spinner
-    let tx_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
+    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
 
     log_success!("🎉 Transfer with custom delay scheduled successfully!");
-    log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
-    log_print!("⏰ Transfer will execute after {} blocks/ms", delay);
+    log_print!(
+        "📋 Transaction hash: {}",
+        tx_report.extrinsic_hash.to_string().bright_yellow()
+    );
+    log_print!("⏰ Transfer will execute after {} {}", delay, unit_str);
 
     Ok(())
 }
@@ -308,10 +339,13 @@ async fn cancel_transaction(
     })?;
 
     // Submit extrinsic with spinner
-    let result_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
+    let result_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
 
     log_success!("🎉 Transaction canceled successfully!");
-    log_print!("📋 Cancellation hash: {}", result_hash.bright_yellow());
+    log_print!(
+        "📋 Cancellation hash: {}",
+        result_report.extrinsic_hash.to_string().bright_yellow()
+    );
 
     Ok(())
 }
@@ -361,10 +395,13 @@ async fn set_reversibility(
     })?;
 
     // Submit extrinsic with spinner
-    let tx_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
+    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
 
     log_success!("🎉 Reversibility settings updated successfully!");
-    log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
+    log_print!(
+        "📋 Transaction hash: {}",
+        tx_report.extrinsic_hash.to_string().bright_yellow()
+    );
 
     Ok(())
 }
@@ -423,7 +460,10 @@ async fn execute_transfer(
     let result_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
 
     log_success!("🎉 Transfer executed successfully!");
-    log_print!("📋 Execution hash: {}", result_hash.bright_yellow());
+    log_print!(
+        "📋 Execution hash: {}",
+        result_hash.extrinsic_hash.to_string().bright_yellow()
+    );
 
     Ok(())
 }

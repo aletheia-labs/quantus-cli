@@ -3,11 +3,13 @@ use crate::error::Result;
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
 use colored::Colorize;
+
+use scale_value::Value;
 use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
-    ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
-    GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
+    ac_primitives::ExtrinsicSigner, api::ExtrinsicReport, extrinsic::BalancesExtrinsics,
+    rpc::JsonrpseeClient, Api, GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
 };
 
 /// Macro to submit any type of extrinsic without code duplication
@@ -16,7 +18,7 @@ use substrate_api_client::{
 #[macro_export]
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
-        // Convert our QuantumKeyPair to ResonancePair
+        use substrate_api_client::api::ExtrinsicReport;
         let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
             crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
         })?;
@@ -29,7 +31,7 @@ macro_rules! submit_extrinsic {
         api_with_signer.set_signer(extrinsic_signer);
 
         // Submit and watch the extrinsic until it's included in a block
-        let result = api_with_signer
+        let result: ExtrinsicReport<_> = api_with_signer
             .submit_and_watch_extrinsic_until($extrinsic, XtStatus::InBlock)
             .await
             .map_err(|e| {
@@ -39,8 +41,8 @@ macro_rules! submit_extrinsic {
                 ))
             })?;
 
-        let extrinsic_hash = result.extrinsic_hash;
-        let block_hash = result.block_hash.unwrap_or_default();
+        let extrinsic_hash = &result.extrinsic_hash;
+        let block_hash = &result.block_hash.unwrap_or_default();
 
         log_verbose!(
             "📋 Transaction hash: {}",
@@ -52,20 +54,45 @@ macro_rules! submit_extrinsic {
         );
 
         // Log events if available
-        if let Some(events) = result.events {
-            log_verbose!("📊 Transaction events:");
+        if let Some(ref events) = result.events {
+            log_print!("📊 Transaction events:");
             for (i, event) in events.iter().enumerate() {
-                log_verbose!(
+                log_print!(
                     "   {} Event: Pallet: {}, Variant: {}",
                     i,
-                    event.pallet_name(),
-                    event.variant_name()
+                    event.pallet_name().bright_cyan(),
+                    event.variant_name().bright_green()
                 );
+
+                // For specific events we care about, try to decode known types
+                match (event.pallet_name(), event.variant_name()) {
+                    ("ReversibleTransfers", "TransactionScheduled") => {
+                        log_print!("      🎯 This is a TransactionScheduled event!");
+
+                        // Extract and display the transaction ID
+                        if let Ok(field_values) = event.field_values(&$self.api.metadata()) {
+                            if let Some(tx_id_hex) = crate::chain::client::extract_transaction_id_from_field_values(&field_values) {
+                                log_print!("      🆔 Transaction ID: {}", tx_id_hex.bright_yellow().bold());
+                                log_print!("      💡 Use this ID to cancel: quantus reversible cancel --tx-id {}", tx_id_hex.bright_green());
+                            } else {
+                                log_print!("      ⚠️  Could not extract transaction ID from event");
+                                // Fallback to raw display for debugging
+                                let field_bytes = event.field_bytes();
+                                log_print!("      📝 Raw bytes ({} bytes): {}", field_bytes.len(), hex::encode(&field_bytes));
+                                log_print!("      📋 Field values: {:?}", field_values);
+                            }
+                        }
+                    }
+                    ("Balances", "Transfer") => {
+                        log_print!("      💰 This is a Balance Transfer event!");
+                    }
+                    _ => {}
+                }
             }
         }
 
         // Return the extrinsic hash as a hex string
-        Ok::<String, crate::error::QuantusError>(format!("{:?}", extrinsic_hash))
+        Ok::<ExtrinsicReport<sp_core::H256>, crate::error::QuantusError>(result)
     }};
 }
 
@@ -77,6 +104,7 @@ macro_rules! submit_extrinsic_with_spinner {
         use crate::{log_error, log_print, log_success};
         use colored::Colorize;
         use std::io::{self, Write};
+        use substrate_api_client::api::ExtrinsicReport;
         use tokio::time::{self, Duration};
 
         // Show spinner during the potentially slow network submission
@@ -101,10 +129,13 @@ macro_rules! submit_extrinsic_with_spinner {
 
         // Handle result and show appropriate message
         match result {
-            Ok(tx_hash) => {
+            Ok(report) => {
                 log_success!("🎉 Transaction submitted successfully!");
-                log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
-                Ok(tx_hash)
+                log_print!(
+                    "📋 Transaction hash: {}",
+                    &report.extrinsic_hash.to_string().bright_yellow()
+                );
+                Ok::<ExtrinsicReport<sp_core::H256>, crate::error::QuantusError>(report)
             }
             Err(e) => {
                 log_error!("❌ Transaction failed: {}", e);
@@ -112,6 +143,58 @@ macro_rules! submit_extrinsic_with_spinner {
             }
         }
     }};
+}
+
+/// Extract transaction ID from TransactionScheduled event field values
+pub fn extract_transaction_id_from_field_values(
+    field_values: &scale_value::Composite<u32>,
+) -> Option<String> {
+    // Look for Named composite containing tx_id field
+    if let scale_value::Composite::Named(named_fields) = field_values {
+        for (field_name, field_value) in named_fields {
+            if field_name == "tx_id" {
+                // tx_id is a nested composite structure containing the 32-byte hash
+                if let scale_value::Value {
+                    value: scale_value::ValueDef::Composite(composite),
+                    ..
+                } = field_value
+                {
+                    if let scale_value::Composite::Unnamed(outer_values) = composite {
+                        if let Some(scale_value::Value {
+                            value: scale_value::ValueDef::Composite(inner_composite),
+                            ..
+                        }) = outer_values.first()
+                        {
+                            if let scale_value::Composite::Unnamed(byte_values) = inner_composite {
+                                // Extract the 32 bytes from U128 primitive values
+                                let mut tx_id_bytes = Vec::new();
+                                for byte_value in byte_values {
+                                    if let scale_value::Value {
+                                        value:
+                                            scale_value::ValueDef::Primitive(
+                                                scale_value::Primitive::U128(byte),
+                                            ),
+                                        ..
+                                    } = byte_value
+                                    {
+                                        if *byte <= 255 {
+                                            tx_id_bytes.push(*byte as u8);
+                                        }
+                                    }
+                                }
+
+                                // Convert to hex string if we have exactly 32 bytes
+                                if tx_id_bytes.len() == 32 {
+                                    return Some(format!("0x{}", hex::encode(tx_id_bytes)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Chain client for interacting with the Quantus network
@@ -216,7 +299,7 @@ impl ChainClient {
         from_keypair: &QuantumKeyPair,
         to_address: &str,
         amount: u128,
-    ) -> Result<String> {
+    ) -> Result<substrate_api_client::api::ExtrinsicReport<sp_core::H256>> {
         log_verbose!("🚀 Creating transfer transaction...");
         log_verbose!(
             "   From: {}",

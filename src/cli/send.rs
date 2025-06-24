@@ -50,15 +50,20 @@ pub async fn handle_send_command(
     );
 
     // Submit transaction (this is where it might hang/take long)
-    let tx_hash = chain_client.transfer(&keypair, &to_address, amount).await?;
+    let tx_report = chain_client.transfer(&keypair, &to_address, amount).await?;
 
     log_print!(
         "✅ {} Transaction submitted!",
         "SUCCESS".bright_green().bold()
     );
-    log_print!("📍 Transaction hash: {}", tx_hash.bright_blue());
+    log_print!(
+        "📍 Transaction hash: {}",
+        tx_report.extrinsic_hash.to_string().bright_blue()
+    );
 
-    let success = chain_client.wait_for_finalization(&tx_hash).await?;
+    let success = chain_client
+        .wait_for_finalization(&tx_report.extrinsic_hash.to_string())
+        .await?;
 
     if success {
         log_success!(
