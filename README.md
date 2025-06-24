@@ -411,17 +411,6 @@ done
 
 ## 🛠️ Current Status
 
-**✅ Fully Implemented:**
-- Complete wallet management (create, view, list, export, import, delete)
-- Real token transfers with fee calculation
-- **Generic pallet calls with smart type detection**
-- **Metadata-driven function discovery and validation**
-- Balance queries with proper formatting
-- Chain metadata exploration
-- Developer test wallet utilities
-- Password convenience features
-- Progress indicators and verbose logging
-
 **🔮 Architecture Ready For:**
 - Additional pallet integrations (staking, governance, etc.)
 - Hardware wallet support
@@ -464,5 +453,3 @@ The Quantus CLI is a **production-ready** tool that:
 - Keep your private keys secure
 
 ---
-
-🚀 **Ready to explore the quantum future of blockchain!** 🚀 
