@@ -3,6 +3,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 pub mod generic_call;
+pub mod progress_spinner;
 pub mod send;
 pub mod wallet;
 

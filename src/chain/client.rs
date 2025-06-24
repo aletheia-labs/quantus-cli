@@ -69,6 +69,51 @@ macro_rules! submit_extrinsic {
     }};
 }
 
+/// Submit extrinsic with spinner - wrapper around submit_extrinsic! that shows a spinner
+#[macro_export]
+macro_rules! submit_extrinsic_with_spinner {
+    ($self:expr, $keypair:expr, $extrinsic:expr) => {{
+        use crate::cli::progress_spinner::ProgressSpinner;
+        use crate::{log_error, log_print, log_success};
+        use colored::Colorize;
+        use std::io::{self, Write};
+        use tokio::time::{self, Duration};
+
+        // Show spinner during the potentially slow network submission
+        let mut spinner = ProgressSpinner::new();
+
+        // Create a task that shows the spinner while waiting for network
+        let spinner_handle = tokio::spawn(async move {
+            let wait_duration = Duration::from_millis(200);
+            loop {
+                spinner.tick();
+                time::sleep(wait_duration).await;
+            }
+        });
+
+        // Submit the extrinsic using the core macro
+        let result = crate::submit_extrinsic!($self, $keypair, $extrinsic);
+
+        // Stop the spinner and clear the line
+        spinner_handle.abort();
+        print!("\r                                                    \r");
+        io::stdout().flush().unwrap();
+
+        // Handle result and show appropriate message
+        match result {
+            Ok(tx_hash) => {
+                log_success!("🎉 Transaction submitted successfully!");
+                log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
+                Ok(tx_hash)
+            }
+            Err(e) => {
+                log_error!("❌ Transaction failed: {}", e);
+                Err(e)
+            }
+        }
+    }};
+}
+
 /// Chain client for interacting with the Quantus network
 pub struct ChainClient {
     pub(crate) api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
@@ -215,7 +260,7 @@ impl ChainClient {
         log_verbose!("📋 Extrinsic created: {:?}", transfer_extrinsic);
 
         // Use the macro to submit the extrinsic
-        submit_extrinsic!(self, from_keypair, transfer_extrinsic)
+        submit_extrinsic_with_spinner!(self, from_keypair, transfer_extrinsic)
     }
 
     /// Wait for transaction finalization - now using real block monitoring

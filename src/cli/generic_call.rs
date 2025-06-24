@@ -188,7 +188,7 @@ async fn submit_balance_transfer_extrinsic(
 
     // Use the central submit_extrinsic! macro - ONE place for all submission logic
     log_print!("📡 Submitting extrinsic to chain...");
-    crate::submit_extrinsic!(chain_client, keypair, extrinsic)
+    crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)
 }
 
 /// Create and submit system remark extrinsic using the central macro
@@ -220,7 +220,7 @@ async fn submit_system_remark_extrinsic(
 
     // Use the central submit_extrinsic! macro - ONE place for all submission logic
     log_print!("📡 Submitting extrinsic to chain...");
-    crate::submit_extrinsic!(chain_client, keypair, extrinsic)
+    crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)
 }
 
 /// Create and submit reversible transfer extrinsic using the central macro
@@ -274,7 +274,7 @@ async fn submit_reversible_transfer_extrinsic(
 
     // Use the central submit_extrinsic! macro - ONE place for all submission logic
     log_print!("📡 Submitting extrinsic to chain...");
-    crate::submit_extrinsic!(chain_client, keypair, extrinsic)
+    crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)
 }
 
 /// Parse a balance amount from JSON value
