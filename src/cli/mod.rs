@@ -2,6 +2,7 @@ use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
 
+pub mod compose_macros;
 pub mod generic_call;
 pub mod send;
 pub mod wallet;
@@ -265,11 +266,6 @@ async fn handle_developer_command(
             log_print!("   quantus send --from crystal_bob --to <address> --amount 1000");
             log_print!("   quantus send --from crystal_charlie --to <address> --amount 1000");
             log_print!("");
-            log_print!(
-                "🔑 {} All test wallets use password: {}",
-                "NOTE".bright_blue().bold(),
-                "test123".bright_yellow()
-            );
 
             Ok(())
         }

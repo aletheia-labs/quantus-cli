@@ -3257,6 +3257,7 @@ dependencies = [
  "dilithium-crypto",
  "dirs",
  "env_logger",
+ "frame-metadata",
  "hex",
  "jsonrpsee",
  "log",
