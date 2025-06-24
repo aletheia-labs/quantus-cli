@@ -187,26 +187,45 @@ async fn handle_generic_call_command(
     call: String,
     args: Option<String>,
     from: String,
-    password: Option<String>,
-    password_file: Option<String>,
+    _password: Option<String>,
+    _password_file: Option<String>,
     tip: Option<String>,
     offline: bool,
     call_data_only: bool,
     node_url: &str,
 ) -> crate::error::Result<()> {
-    generic_call::handle_generic_call_command(
-        pallet,
-        call,
-        args,
-        from,
-        password,
-        password_file,
-        tip,
-        offline,
-        call_data_only,
-        node_url,
-    )
-    .await
+    // For now, we only support live submission (not offline or call-data-only)
+    if offline {
+        log_error!("❌ Offline mode is not yet implemented");
+        log_print!("💡 Currently only live submission is supported");
+        return Ok(());
+    }
+
+    if call_data_only {
+        log_error!("❌ Call data only mode is not yet implemented");
+        log_print!("💡 Currently only live submission is supported");
+        return Ok(());
+    }
+
+    // Parse arguments if provided
+    let parsed_args: Vec<serde_json::Value> = if let Some(args_str) = args {
+        match serde_json::from_str(&args_str) {
+            Ok(args) => args,
+            Err(e) => {
+                log_error!("Failed to parse arguments as JSON: {}", e);
+                log_print!("Expected format: '[\"arg1\", \"arg2\", ...]'");
+                return Ok(());
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Create chain client
+    let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+
+    // Execute the generic call
+    generic_call::execute_generic_call(&chain_client, &pallet, &call, parsed_args, &from, tip).await
 }
 async fn handle_developer_command(
     command: DeveloperCommands,

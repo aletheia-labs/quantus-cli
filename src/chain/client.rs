@@ -1,5 +1,4 @@
 use super::quantus_runtime_config::QuantusRuntimeConfig;
-/// Chain client for interacting with the Quantus network
 use crate::error::Result;
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
@@ -14,6 +13,7 @@ use substrate_api_client::{
 /// Macro to submit any type of extrinsic without code duplication
 /// Note: This should be a method but it seems impossible to figure out the correct parameter types for this call.
 /// Extrinsics are more lenient with typing.
+#[macro_export]
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
         // Convert our QuantumKeyPair to ResonancePair
@@ -71,7 +71,7 @@ macro_rules! submit_extrinsic {
 
 /// Chain client for interacting with the Quantus network
 pub struct ChainClient {
-    api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
+    pub(crate) api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
 }
 
 impl ChainClient {
