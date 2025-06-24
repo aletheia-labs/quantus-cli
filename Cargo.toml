@@ -46,10 +46,6 @@ zeroize = "1.7"  # Secure memory clearing
 # Quantus crypto dependencies
 rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-dilithium" }
 rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-hdwallet" }
-# dilithium-crypto = { git = "https://github.com/Quantus-Network/chain", default-features = false, features = [
-#     "std",
-#     "full_crypto",
-# ] }
 poseidon-resonance = { git = "https://github.com/Quantus-Network/poseidon-resonance", features = ["serde"] }
 dilithium-crypto = { git = "https://github.com/Quantus-Network/chain", package = "dilithium-crypto" }
 

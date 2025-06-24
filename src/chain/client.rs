@@ -539,6 +539,27 @@ impl ChainClient {
         let formatted = self.format_balance_with_symbol(raw_amount).await?;
         Ok((raw_amount, formatted))
     }
+
+    /// Get access to the API for generic calls using compose macros
+    pub fn get_api(&self) -> &Api<QuantusRuntimeConfig, JsonrpseeClient> {
+        &self.api
+    }
+
+    /// Create an API instance with a signer for generic calls
+    pub fn create_api_with_signer(
+        &self,
+        keypair: &QuantumKeyPair,
+    ) -> Result<Api<QuantusRuntimeConfig, JsonrpseeClient>> {
+        let resonance_pair = keypair.to_resonance_pair().map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
+        })?;
+
+        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+        let mut api_with_signer = self.api.clone();
+        api_with_signer.set_signer(extrinsic_signer);
+
+        Ok(api_with_signer)
+    }
 }
 
 // Chain client implementation ends here

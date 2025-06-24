@@ -1,6 +1,8 @@
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
+use colored::Colorize;
 
+pub mod generic_call;
 pub mod send;
 pub mod wallet;
 
@@ -32,6 +34,45 @@ pub enum Commands {
         /// Read password from file (for scripting)
         #[arg(long)]
         password_file: Option<String>,
+    },
+
+    /// Generic extrinsic call - call ANY pallet function!
+    Call {
+        /// Pallet name (e.g., "Balances")
+        #[arg(long)]
+        pallet: String,
+
+        /// Call/function name (e.g., "transfer_allow_death")
+        #[arg(short, long)]
+        call: String,
+
+        /// Arguments as JSON array (e.g., '["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "1000000000000"]')
+        #[arg(short, long)]
+        args: Option<String>,
+
+        /// Wallet name to sign with
+        #[arg(short, long)]
+        from: String,
+
+        /// Password for the wallet
+        #[arg(short, long)]
+        password: Option<String>,
+
+        /// Read password from file
+        #[arg(long)]
+        password_file: Option<String>,
+
+        /// Optional tip amount to prioritize the transaction
+        #[arg(long)]
+        tip: Option<String>,
+
+        /// Create offline extrinsic without submitting
+        #[arg(long)]
+        offline: bool,
+
+        /// Output the call as hex-encoded data only
+        #[arg(long)]
+        call_data_only: bool,
     },
 
     /// Query account balance
@@ -71,22 +112,98 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
     match command {
         Commands::Wallet(wallet_cmd) => wallet::handle_wallet_command(wallet_cmd, node_url).await,
         Commands::Send {
+            from,
             to,
             amount,
-            from,
             password,
             password_file,
         } => send::handle_send_command(from, to, &amount, node_url, password, password_file).await,
-        Commands::Balance { address } => handle_balance_command(address, node_url).await,
-        Commands::Developer(dev_cmd) => handle_developer_command(dev_cmd, node_url).await,
-        Commands::System => handle_system_command(node_url).await,
-        Commands::Metadata { no_docs } => handle_metadata_command(node_url, no_docs).await,
+        Commands::Call {
+            pallet,
+            call,
+            args,
+            from,
+            password,
+            password_file,
+            tip,
+            offline,
+            call_data_only,
+        } => {
+            handle_generic_call_command(
+                pallet,
+                call,
+                args,
+                from,
+                password,
+                password_file,
+                tip,
+                offline,
+                call_data_only,
+                node_url,
+            )
+            .await
+        }
+        Commands::Balance { address } => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            let balance = chain_client.get_balance(&address).await?;
+            let formatted_balance = chain_client.format_balance_with_symbol(balance).await?;
+            log_print!("💰 Balance: {}", formatted_balance);
+            Ok(())
+        }
+        Commands::Developer(dev_cmd) => match dev_cmd {
+            DeveloperCommands::CreateTestWallets => {
+                // TODO: Implement test wallet creation
+                log_print!("🧪 Creating test wallets...");
+                log_print!("This functionality will be implemented soon!");
+                Ok(())
+            }
+        },
+        Commands::System => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            chain_client.get_system_info().await
+        }
+        Commands::Metadata { no_docs } => {
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            chain_client.explore_chain_metadata(no_docs).await
+        }
         Commands::Version => {
-            log_print!("Quantus CLI v{}", env!("CARGO_PKG_VERSION"));
-            log_print!("Build: {}", env!("CARGO_PKG_DESCRIPTION"));
+            log_print!(
+                "🔬 {} v{}",
+                "Quantus CLI".bright_cyan().bold(),
+                env!("CARGO_PKG_VERSION").bright_yellow()
+            );
+            log_print!("🏗️  Built with Rust and love for quantum-safe blockchain");
             Ok(())
         }
     }
+}
+
+/// Handle generic extrinsic call command
+async fn handle_generic_call_command(
+    pallet: String,
+    call: String,
+    args: Option<String>,
+    from: String,
+    password: Option<String>,
+    password_file: Option<String>,
+    tip: Option<String>,
+    offline: bool,
+    call_data_only: bool,
+    node_url: &str,
+) -> crate::error::Result<()> {
+    generic_call::handle_generic_call_command(
+        pallet,
+        call,
+        args,
+        from,
+        password,
+        password_file,
+        tip,
+        offline,
+        call_data_only,
+        node_url,
+    )
+    .await
 }
 
 /// Handle the balance query command
