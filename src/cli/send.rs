@@ -1,40 +1,7 @@
-use crate::wallet::password;
 use crate::{
     chain::client::ChainClient, error::Result, log_error, log_print, log_success, log_verbose,
-    wallet::WalletManager,
 };
 use colored::Colorize;
-use std::io::{self, Write};
-use std::time::{Duration, Instant};
-use tokio::time;
-
-/// Simple progress spinner for showing waiting status
-struct ProgressSpinner {
-    chars: Vec<char>,
-    current: usize,
-    start_time: Instant,
-}
-
-impl ProgressSpinner {
-    fn new() -> Self {
-        Self {
-            chars: vec!['|', '/', '-', '\\'],
-            current: 0,
-            start_time: Instant::now(),
-        }
-    }
-
-    fn tick(&mut self) {
-        let elapsed = self.start_time.elapsed().as_secs();
-        print!(
-            "\r🔗 Waiting for confirmation... {} ({}s)",
-            self.chars[self.current].to_string().bright_blue(),
-            elapsed
-        );
-        io::stdout().flush().unwrap();
-        self.current = (self.current + 1) % self.chars.len();
-    }
-}
 
 /// Handle the send command
 pub async fn handle_send_command(
@@ -58,16 +25,8 @@ pub async fn handle_send_command(
     );
 
     // Get password securely for decryption (with convenience options)
-    let wallet_password = password::get_wallet_password(&from_wallet, password, password_file)?;
-
-    // Load and decrypt the sender wallet
-    let wallet_manager = WalletManager::new()?;
-    let wallet_data = wallet_manager.load_wallet(&from_wallet, &wallet_password)?;
-
     log_verbose!("📦 Using wallet: {}", from_wallet.bright_blue().bold());
-
-    // Get the keypair (already decrypted)
-    let keypair = &wallet_data.keypair;
+    let keypair = crate::wallet::load_keypair_from_wallet(&from_wallet, password, password_file)?;
 
     // Get account information
     let from_account_id = keypair.to_account_id_ss58check();
@@ -90,25 +49,8 @@ pub async fn handle_send_command(
         "SIGN".bright_magenta().bold()
     );
 
-    // Show spinner during the potentially slow network submission
-    let mut spinner = ProgressSpinner::new();
-
-    // Create a task that shows the spinner while waiting for network
-    let spinner_handle = tokio::spawn(async move {
-        let wait_duration = Duration::from_millis(200);
-        loop {
-            spinner.tick();
-            time::sleep(wait_duration).await;
-        }
-    });
-
     // Submit transaction (this is where it might hang/take long)
     let tx_hash = chain_client.transfer(&keypair, &to_address, amount).await?;
-
-    // Stop the spinner and clear the line
-    spinner_handle.abort();
-    print!("\r                                                    \r"); // Clear spinner line
-    io::stdout().flush().unwrap();
 
     log_print!(
         "✅ {} Transaction submitted!",

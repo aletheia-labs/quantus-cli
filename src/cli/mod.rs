@@ -4,6 +4,7 @@ use colored::Colorize;
 
 pub mod generic_call;
 pub mod progress_spinner;
+pub mod reversible;
 pub mod send;
 pub mod wallet;
 
@@ -36,6 +37,10 @@ pub enum Commands {
         #[arg(long)]
         password_file: Option<String>,
     },
+
+    /// Reversible transfer commands
+    #[command(subcommand)]
+    Reversible(reversible::ReversibleCommands),
 
     /// Generic extrinsic call - call ANY pallet function!
     Call {
@@ -119,6 +124,9 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
             password,
             password_file,
         } => send::handle_send_command(from, to, &amount, node_url, password, password_file).await,
+        Commands::Reversible(reversible_cmd) => {
+            reversible::handle_reversible_command(reversible_cmd, node_url).await
+        }
         Commands::Call {
             pallet,
             call,
