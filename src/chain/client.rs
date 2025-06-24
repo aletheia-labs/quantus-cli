@@ -140,9 +140,27 @@ impl ChainClient {
     pub async fn get_system_info(&self) -> Result<()> {
         log_verbose!("🔍 Querying system information...");
 
-        // For now, just print a placeholder - we'll implement proper system queries later
-        log_print!("🏗️  Chain: Quantus DevNet");
-        log_print!("🔧 Using substrate-api-client");
+        // Get chain properties
+        let (token_symbol, token_decimals) = self.get_chain_properties().await?;
+
+        // Get metadata information
+        let metadata = self.api.metadata();
+        let pallets: Vec<_> = metadata.pallets().collect();
+
+        log_print!("🏗️  Chain System Information:");
+        log_print!(
+            "   💰 Token: {} ({} decimals)",
+            token_symbol.bright_yellow(),
+            token_decimals.to_string().bright_cyan()
+        );
+        log_print!(
+            "   📦 Pallets: {} available",
+            pallets.len().to_string().bright_green()
+        );
+        log_print!("   🔧 Runtime: Substrate-based");
+        log_print!("   🌐 Network: Quantus Network");
+
+        log_verbose!("💡 Use 'quantus metadata' to explore all available pallets and calls");
 
         Ok(())
     }
