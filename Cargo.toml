@@ -48,6 +48,8 @@ rusty-crystals-dilithium = { git = "https://github.com/Quantus-Network/rusty-cry
 rusty-crystals-hdwallet = { git = "https://github.com/Quantus-Network/rusty-crystals.git", package = "rusty-crystals-hdwallet" }
 poseidon-resonance = { git = "https://github.com/Quantus-Network/poseidon-resonance", features = ["serde"] }
 dilithium-crypto = { git = "https://github.com/Quantus-Network/chain", package = "dilithium-crypto" }
+qp-scheduler = { git = "https://github.com/Quantus-Network/chain", package = "qp-scheduler" }
+pallet-reversible-transfers = { git = "https://github.com/Quantus-Network/chain", package = "pallet-reversible-transfers" }
 
 # Blockchain and RPC client
 # Note: We use our own modified version of substrate-api-client to support Dilithium crypto
@@ -60,6 +62,8 @@ codec = { package = "parity-scale-codec", version = "3.7", features = ["derive"]
 scale-info = { version = "2.1", features = ["derive"] }
 primitive-types = { version = "0.13", features = ["serde", "scale-info"] }
 frame-metadata = { version = "18.0", default-features = false, features = ["current", "serde_full", "decode"] }
+scale-value = "0.18"
+subxt = "0.42.1"
 
 [dev-dependencies]
 tempfile = "3.8"

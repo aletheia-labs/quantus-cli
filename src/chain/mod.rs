@@ -7,3 +7,4 @@
 /// - Managing RPC connections
 pub mod client;
 pub mod quantus_runtime_config;
+pub mod types;

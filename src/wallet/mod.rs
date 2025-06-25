@@ -270,6 +270,18 @@ impl WalletManager {
     }
 }
 
+pub fn load_keypair_from_wallet(
+    wallet_name: &str,
+    password: Option<String>,
+    password_file: Option<String>,
+) -> Result<QuantumKeyPair> {
+    let wallet_manager = WalletManager::new()?;
+    let wallet_password = password::get_wallet_password(wallet_name, password, password_file)?;
+    let wallet_data = wallet_manager.load_wallet(wallet_name, &wallet_password)?;
+    let keypair = wallet_data.keypair;
+    Ok(keypair)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

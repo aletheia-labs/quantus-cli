@@ -1,7 +1,6 @@
 use crate::chain::client::ChainClient;
 use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
 use crate::error::Result;
-use crate::wallet::{password, WalletManager};
 use crate::{log_error, log_print, log_success, log_verbose};
 use codec::Compact;
 use colored::Colorize;
@@ -11,7 +10,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
 use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{SubmitAndWatch, XtStatus};
+use substrate_api_client::{ExtrinsicReport, SubmitAndWatch, XtStatus};
 
 /// Execute a generic call to any pallet
 pub async fn execute_generic_call(
@@ -30,11 +29,8 @@ pub async fn execute_generic_call(
         log_print!("Tip: {}", tip.bright_magenta());
     }
 
-    let wallet_manager = WalletManager::new()?;
-    let wallet_password = password::get_wallet_password(from, None, None)?;
+    let keypair = crate::wallet::load_keypair_from_wallet(from, None, None)?;
 
-    let wallet_data = wallet_manager.load_wallet(from, &wallet_password)?;
-    let keypair = &wallet_data.keypair;
     log_verbose!("✅ Loaded keypair for {}", from);
 
     // Get metadata and validate pallet/call exists
@@ -63,30 +59,36 @@ pub async fn execute_generic_call(
     log_verbose!("✅ Found call '{}' with index {}", call, call_variant.index);
 
     // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(keypair)?;
+    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
 
     // Create and submit extrinsic based on pallet and call - all logic in one place
     log_print!("🔧 Creating extrinsic for {}.{}", pallet, call);
 
-    let tx_hash = match (pallet, call) {
+    let tx_report = match (pallet, call) {
         // Balances pallet calls
         ("Balances", "transfer_allow_death") => {
-            submit_balance_transfer_extrinsic(chain_client, &api_with_signer, keypair, &args, false)
-                .await?
+            submit_balance_transfer_extrinsic(
+                chain_client,
+                &api_with_signer,
+                &keypair,
+                &args,
+                false,
+            )
+            .await?
         }
         ("Balances", "transfer_keep_alive") => {
-            submit_balance_transfer_extrinsic(chain_client, &api_with_signer, keypair, &args, true)
+            submit_balance_transfer_extrinsic(chain_client, &api_with_signer, &keypair, &args, true)
                 .await?
         }
 
         // System pallet calls
         ("System", "remark") => {
-            submit_system_remark_extrinsic(chain_client, &api_with_signer, keypair, &args).await?
+            submit_system_remark_extrinsic(chain_client, &api_with_signer, &keypair, &args).await?
         }
 
         // ReversibleTransfers pallet calls
         ("ReversibleTransfers", "schedule_transfer") => {
-            submit_reversible_transfer_extrinsic(chain_client, &api_with_signer, keypair, &args)
+            submit_reversible_transfer_extrinsic(chain_client, &api_with_signer, &keypair, &args)
                 .await?
         }
 
@@ -132,7 +134,10 @@ pub async fn execute_generic_call(
     };
 
     log_success!("🎉 Transaction submitted successfully!");
-    log_print!("📋 Transaction hash: {}", tx_hash.bright_yellow());
+    log_print!(
+        "📋 Transaction hash: {}",
+        tx_report.extrinsic_hash.to_string().bright_yellow()
+    );
 
     Ok(())
 }
@@ -147,7 +152,7 @@ async fn submit_balance_transfer_extrinsic(
     keypair: &crate::wallet::QuantumKeyPair,
     args: &[Value],
     keep_alive: bool,
-) -> Result<String> {
+) -> Result<substrate_api_client::api::ExtrinsicReport<sp_core::H256>> {
     if args.len() != 2 {
         return Err(crate::error::QuantusError::Generic(
             "Balance transfer requires 2 arguments: dest, value".to_string(),
@@ -200,7 +205,7 @@ async fn submit_system_remark_extrinsic(
     >,
     keypair: &crate::wallet::QuantumKeyPair,
     args: &[Value],
-) -> Result<String> {
+) -> Result<substrate_api_client::api::ExtrinsicReport<sp_core::H256>> {
     if args.len() != 1 {
         return Err(crate::error::QuantusError::Generic(
             "remark requires 1 argument: remark (string or hex bytes)".to_string(),
@@ -232,7 +237,7 @@ async fn submit_reversible_transfer_extrinsic(
     >,
     keypair: &crate::wallet::QuantumKeyPair,
     args: &[Value],
-) -> Result<String> {
+) -> Result<substrate_api_client::api::ExtrinsicReport<sp_core::H256>> {
     if args.len() != 2 {
         return Err(crate::error::QuantusError::Generic(
             "schedule_transfer requires 2 arguments: dest, amount".to_string(),
