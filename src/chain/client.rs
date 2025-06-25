@@ -4,6 +4,7 @@ use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
 use colored::Colorize;
 
+use super::types::reversible_transfers::events::{TransactionCancelled, TransactionScheduled};
 use scale_value::Value;
 use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
@@ -18,7 +19,11 @@ use substrate_api_client::{
 #[macro_export]
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
+        use codec::Decode;
         use substrate_api_client::api::ExtrinsicReport;
+        // TODO: this shouldn't be here prob
+        use crate::chain::types::reversible_transfers::events::TransactionScheduled;
+
         let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
             crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
         })?;
@@ -68,20 +73,13 @@ macro_rules! submit_extrinsic {
                 match (event.pallet_name(), event.variant_name()) {
                     ("ReversibleTransfers", "TransactionScheduled") => {
                         log_print!("      🎯 This is a TransactionScheduled event!");
-
-                        // Extract and display the transaction ID
-                        if let Ok(field_values) = event.field_values(&$self.api.metadata()) {
-                            if let Some(tx_id_hex) = crate::chain::client::extract_transaction_id_from_field_values(&field_values) {
-                                log_print!("      🆔 Transaction ID: {}", tx_id_hex.bright_yellow().bold());
-                                log_print!("      💡 Use this ID to cancel: quantus reversible cancel --tx-id {}", tx_id_hex.bright_green());
-                            } else {
-                                log_print!("      ⚠️  Could not extract transaction ID from event");
-                                // Fallback to raw display for debugging
-                                let field_bytes = event.field_bytes();
-                                log_print!("      📝 Raw bytes ({} bytes): {}", field_bytes.len(), hex::encode(&field_bytes));
-                                log_print!("      📋 Field values: {:?}", field_values);
-                            }
-                        }
+                        let mut event_bytes = event.field_bytes().clone();
+                        let scheduled_event = TransactionScheduled::decode(&mut event_bytes)
+                            .expect("Failed to decode TransactionScheduled event");
+                        log_print!(
+                            "      📅 Scheduled at block: {:?}",
+                            scheduled_event.execute_at
+                        );
                     }
                     ("Balances", "Transfer") => {
                         log_print!("      💰 This is a Balance Transfer event!");
