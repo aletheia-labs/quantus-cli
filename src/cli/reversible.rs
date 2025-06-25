@@ -527,271 +527,134 @@ async fn list_pending_transactions(
         }
     };
 
-    log_print!("🔍 Querying for address: {}", target_address.bright_green());
-
     // Convert to AccountId32 for storage queries
     let account_id = AccountId32::from_ss58check(&target_address)
         .map_err(|e| crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
 
-    // Get metadata to explore storage items
-    let metadata = chain_client.get_api().metadata();
-
-    // Find ReversibleTransfers pallet
-    let reversible_pallet = metadata
-        .pallet_by_name("ReversibleTransfers")
-        .ok_or_else(|| {
-            crate::error::QuantusError::Generic(
-                "ReversibleTransfers pallet not found in metadata".to_string(),
-            )
-        })?;
-
-    log_verbose!("📦 Found ReversibleTransfers pallet");
-
-    // List all storage items in the pallet
-    let storage_entries: Vec<_> = reversible_pallet.storage().collect();
-
-    if storage_entries.is_empty() {
-        log_print!("ℹ️  No storage items found in ReversibleTransfers pallet");
-        return Ok(());
-    }
-
-    // Look for AccountPendingIndex and PendingTransfers storage
-    let mut account_pending_index_storage = None;
-    let mut pending_transfers_storage = None;
-
-    for entry in &storage_entries {
-        match entry.name.as_str() {
-            "AccountPendingIndex" => {
-                account_pending_index_storage = Some(entry);
-                log_verbose!("✅ Found AccountPendingIndex storage");
-            }
-            "PendingTransfers" => {
-                pending_transfers_storage = Some(entry);
-                log_verbose!("✅ Found PendingTransfers storage");
-            }
-            _ => {}
-        }
-    }
-
-    // First, check AccountPendingIndex to see if the account has any pending transactions
-    if let Some(_storage_entry) = account_pending_index_storage {
-        log_print!(
-            "🔍 Checking AccountPendingIndex for account: {}",
-            target_address.bright_green()
-        );
-
-        // Query the count of pending transactions for this account
-        use substrate_api_client::GetStorage;
-        match chain_client
-            .get_api()
-            .get_storage_map::<AccountId32, u32>(
-                "ReversibleTransfers",
-                "AccountPendingIndex",
-                account_id.clone(),
-                None,
-            )
-            .await
-        {
-            Ok(Some(pending_count)) => {
-                log_print!("📊 Account has {} pending transaction(s)", pending_count);
-
-                if pending_count == 0 {
-                    log_print!(
-                        "📝 No pending transfers found for account: {}",
-                        target_address.bright_yellow()
-                    );
-                    return Ok(());
-                }
-            }
-            Ok(None) => {
+    // Check AccountPendingIndex to see if the account has any pending transactions
+    use substrate_api_client::GetStorage;
+    match chain_client
+        .get_api()
+        .get_storage_map::<AccountId32, u32>(
+            "ReversibleTransfers",
+            "AccountPendingIndex",
+            account_id.clone(),
+            None,
+        )
+        .await
+    {
+        Ok(Some(pending_count)) => {
+            if pending_count == 0 {
                 log_print!(
                     "📝 No pending transfers found for account: {}",
-                    target_address.bright_yellow()
+                    target_address
                 );
                 return Ok(());
             }
-            Err(e) => {
-                log_verbose!("❌ Failed to query AccountPendingIndex: {:?}", e);
-                log_print!("⚠️  Continuing with full scan approach...");
-            }
+        }
+        Ok(None) => {
+            log_print!(
+                "📝 No pending transfers found for account: {}",
+                target_address
+            );
+            return Ok(());
+        }
+        Err(_) => {
+            // Continue with scan approach if index query fails
         }
     }
 
-    // Now scan all PendingTransfers to find transfers belonging to this account
-    if let Some(storage_entry) = pending_transfers_storage {
-        log_print!("🔍 Scanning all PendingTransfers to find transfers for this account...");
-
-        if storage_entry.name == "PendingTransfers" {
-            log_print!("🔍 Querying PendingTransfers storage map...");
-            log_verbose!("📋 Storage structure: Hash -> PendingTransfer<AccountId, Balance, Call>");
-
-            // Query all keys from the PendingTransfers storage map
-            // Since it's StorageMap<_, Blake2_128Concat, T::Hash, PendingTransfer<...>, OptionQuery>
-            // We need to get all transaction hashes first, then query each one
-
-            use substrate_api_client::GetStorage;
-
-            // Get storage key prefix for PendingTransfers
+    // Get all pending transfers and find ones belonging to this account
+    match chain_client
+        .get_api()
+        .get_storage_map_key_prefix("ReversibleTransfers", "PendingTransfers")
+        .await
+    {
+        Ok(prefix) => {
             match chain_client
                 .get_api()
-                .get_storage_map_key_prefix("ReversibleTransfers", "PendingTransfers")
+                .get_storage_keys_paged(Some(prefix), 1000, None, None)
                 .await
             {
-                Ok(prefix) => {
-                    // Get all keys with this prefix
-                    match chain_client
-                        .get_api()
-                        .get_storage_keys_paged(Some(prefix), 1000, None, None)
-                        .await
-                    {
-                        Ok(keys) => {
-                            log_print!("📊 Found {} total pending transfer entries", keys.len());
+                Ok(keys) => {
+                    if keys.is_empty() {
+                        log_print!("✅ No pending transfers found in the system");
+                        return Ok(());
+                    }
 
-                            if keys.is_empty() {
-                                log_print!("✅ No pending transfers found in the system");
-                                return Ok(());
-                            }
+                    let mut user_transfers = Vec::new();
 
-                            let mut user_transfers = Vec::new();
+                    // Check each transfer
+                    for key in keys.iter() {
+                        if let Ok(Some(transfer_data)) = chain_client
+                            .get_api()
+                            .get_opaque_storage_by_key(key.clone(), None)
+                            .await
+                        {
+                            // Extract transaction hash from storage key
+                            if key.0.len() >= 32 {
+                                let tx_hash_bytes = &key.0[key.0.len() - 32..];
+                                let tx_hash = hex::encode(tx_hash_bytes);
 
-                            // Query each key to get the PendingTransfer data
-                            for (i, key) in keys.iter().enumerate() {
-                                log_verbose!("🔍 Checking transfer {}/{}:", i + 1, keys.len());
-
-                                // Try to get the raw storage data first
-                                match chain_client
-                                    .get_api()
-                                    .get_opaque_storage_by_key(key.clone(), None)
-                                    .await
-                                {
-                                    Ok(Some(transfer_data)) => {
-                                        log_verbose!(
-                                            "📊 Raw transfer data ({} bytes): 0x{}",
-                                            transfer_data.len(),
-                                            hex::encode(&transfer_data)
+                                // Decode the 'who' field (first field in PendingTransfer)
+                                let mut data = transfer_data.as_slice();
+                                if let Ok(who) = AccountId32::decode(&mut data) {
+                                    // Check if this transfer belongs to our target account
+                                    if who.to_ss58check() == target_address {
+                                        log_print!("📋 Transaction: 0x{}", tx_hash);
+                                        log_print!(
+                                            "   👤 From: {}",
+                                            who.to_ss58check().bright_cyan()
                                         );
 
-                                        // Extract transaction hash from storage key first
-                                        // The key format is: prefix + hash(Hash) + Hash
-                                        // For Blake2_128Concat, it's: prefix + blake2_128(hash) + hash
-                                        if key.0.len() >= 32 {
-                                            // Last 32 bytes should be the original hash
-                                            let tx_hash_bytes = &key.0[key.0.len() - 32..];
-                                            let tx_hash = hex::encode(tx_hash_bytes);
+                                        // Try to decode amount and count from the end
+                                        let remaining_data = data;
+                                        if remaining_data.len() >= 20 {
+                                            let amount_start = remaining_data.len() - 20;
+                                            let count_start = remaining_data.len() - 4;
 
-                                            // Manually decode PendingTransfer fields in order
-                                            // struct PendingTransfer { who: AccountId, call: Call, amount: Balance, count: u32 }
-                                            let mut data = transfer_data.as_slice();
-                                            log_verbose!(
-                                                "🔍 Manually decoding PendingTransfer fields"
-                                            );
+                                            let amount_bytes =
+                                                &remaining_data[amount_start..count_start];
+                                            let count_bytes = &remaining_data[count_start..];
 
-                                            // Decode who (AccountId32)
-                                            if let Ok(who) = AccountId32::decode(&mut data) {
-                                                log_print!(
-                                                    "📋 Transaction {}: 0x{}",
-                                                    i + 1,
-                                                    tx_hash
-                                                );
-                                                log_print!("✅ Successfully decoded PendingTransfer fields");
-                                                log_print!(
-                                                    "   👤 From: {}",
-                                                    who.to_ss58check().bright_cyan()
-                                                );
-
-                                                // Skip the call field by trying to decode and ignore it
-                                                // The call is complex, so we'll skip to amount and count
-                                                let remaining_data = data;
-
-                                                // Try to find amount and count by working backwards from the end
-                                                // count is u32 (4 bytes), amount is u128 (16 bytes)
-                                                if remaining_data.len() >= 20 {
-                                                    let amount_start = remaining_data.len() - 20;
-                                                    let count_start = remaining_data.len() - 4;
-
-                                                    let amount_bytes =
-                                                        &remaining_data[amount_start..count_start];
-                                                    let count_bytes =
-                                                        &remaining_data[count_start..];
-
-                                                    if let (Ok(amount), Ok(count)) = (
-                                                        u128::decode(&mut &amount_bytes[..]),
-                                                        u32::decode(&mut &count_bytes[..]),
-                                                    ) {
-                                                        let formatted_amount = chain_client
-                                                            .format_balance_with_symbol(amount)
-                                                            .await
-                                                            .unwrap_or_else(|_| amount.to_string());
-                                                        log_print!(
-                                                            "   💰 Amount: {}",
-                                                            formatted_amount
-                                                        );
-                                                        log_print!("   📊 Count: {}", count);
-                                                    }
-                                                }
-
-                                                // Check if this transfer belongs to our target account
-                                                let is_our_transfer =
-                                                    who.to_ss58check() == target_address;
-                                                if is_our_transfer {
-                                                    log_print!(
-                                                        "   🎯 This is YOUR pending transfer!"
-                                                    );
-                                                    user_transfers
-                                                        .push((tx_hash, transfer_data.len()));
-                                                }
-                                                continue;
+                                            if let (Ok(amount), Ok(count)) = (
+                                                u128::decode(&mut &amount_bytes[..]),
+                                                u32::decode(&mut &count_bytes[..]),
+                                            ) {
+                                                let formatted_amount = chain_client
+                                                    .format_balance_with_symbol(amount)
+                                                    .await
+                                                    .unwrap_or_else(|_| amount.to_string());
+                                                log_print!("   💰 Amount: {}", formatted_amount);
+                                                log_print!("   📊 Count: {}", count);
                                             }
-
-                                            log_print!("📋 Transaction {}: 0x{}", i + 1, tx_hash);
-                                            log_print!(
-                                                "   📊 Raw data size: {} bytes",
-                                                transfer_data.len()
-                                            );
-                                            user_transfers.push((tx_hash, transfer_data.len()));
                                         }
-                                    }
-                                    Ok(None) => {
-                                        log_verbose!("⚠️  No data found for key {:?}", key);
-                                    }
-                                    Err(e) => {
-                                        log_verbose!("❌ Error querying key {:?}: {:?}", key, e);
-                                    }
-                                }
-                            }
 
-                            if user_transfers.is_empty() {
-                                log_print!("✅ No pending transfers found for this account");
-                            } else {
-                                log_print!("📋 Summary of all pending transfers:");
-                                for (i, (hash, size)) in user_transfers.iter().enumerate() {
-                                    log_print!("   {}. 0x{} ({} bytes)", i + 1, hash, size);
+                                        user_transfers.push(tx_hash);
+                                    }
                                 }
-                                log_print!("💡 Use transaction hash with 'quantus reversible cancel --tx-id <hash>' to cancel");
                             }
                         }
-                        Err(e) => {
-                            log_print!("❌ Error getting storage keys: {:?}", e);
+                    }
+
+                    if user_transfers.is_empty() {
+                        log_print!("✅ No pending transfers found for this account");
+                    } else {
+                        log_print!("📋 Found {} pending transfer(s):", user_transfers.len());
+                        for (i, hash) in user_transfers.iter().enumerate() {
+                            log_print!("   {}. 0x{}", i + 1, hash);
                         }
+                        log_print!("💡 Use transaction hash with 'quantus reversible cancel --tx-id <hash>' to cancel");
                     }
                 }
                 Err(e) => {
-                    log_print!("❌ Error getting storage prefix: {:?}", e);
+                    log_print!("❌ Error getting storage keys: {:?}", e);
                 }
             }
-        } else {
-            // For other storage items, just show what we found
-            log_print!(
-                "💡 Found storage item: {}",
-                storage_entry.name.bright_green()
-            );
-            log_print!("📝 Use 'quantus metadata' to explore the full structure");
-            log_print!("⚠️  Custom storage querying not yet implemented for this storage type");
         }
-    } else {
-        log_print!("❌ Could not find a recognized storage item for pending transactions");
-        log_print!("💡 Available storage items are listed above");
-        log_print!("💡 Use 'quantus metadata' to explore the pallet structure");
+        Err(e) => {
+            log_print!("❌ Error getting storage prefix: {:?}", e);
+        }
     }
 
     Ok(())
