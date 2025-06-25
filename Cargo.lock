@@ -62,7 +62,7 @@ dependencies = [
  "pallet-assets",
  "pallet-balances 40.1.0",
  "parity-scale-codec",
- "poseidon-resonance 0.6.0 (git+https://github.com/Quantus-Network/poseidon-resonance)",
+ "poseidon-resonance",
  "primitive-types 0.13.1",
  "scale-info",
  "serde",
@@ -1279,7 +1279,7 @@ dependencies = [
  "hdwallet",
  "log",
  "parity-scale-codec",
- "poseidon-resonance 0.6.0 (git+https://github.com/Quantus-Network/poseidon-resonance)",
+ "poseidon-resonance",
  "rusty-crystals-dilithium",
  "scale-info",
  "sp-core",
@@ -3180,7 +3180,7 @@ dependencies = [
  "frame-system",
  "log",
  "parity-scale-codec",
- "poseidon-resonance 0.6.0 (git+https://github.com/Quantus-Network/poseidon-resonance)",
+ "poseidon-resonance",
  "scale-info",
  "sp-runtime",
 ]
@@ -3555,21 +3555,6 @@ dependencies = [
 [[package]]
 name = "poseidon-resonance"
 version = "0.6.0"
-dependencies = [
- "log",
- "parity-scale-codec",
- "plonky2",
- "scale-info",
- "serde",
- "sp-core",
- "sp-runtime",
- "sp-storage",
- "sp-trie",
-]
-
-[[package]]
-name = "poseidon-resonance"
-version = "0.6.0"
 source = "git+https://github.com/Quantus-Network/poseidon-resonance#fce507b40c166d9acae1a8885898eea83d0d3780"
 dependencies = [
  "log",
@@ -3747,7 +3732,7 @@ dependencies = [
  "log",
  "pallet-reversible-transfers",
  "parity-scale-codec",
- "poseidon-resonance 0.6.0",
+ "poseidon-resonance",
  "primitive-types 0.13.1",
  "qp-scheduler",
  "rand 0.8.5",
@@ -4150,7 +4135,7 @@ dependencies = [
  "bip39",
  "hex-literal",
  "hmac 0.12.1",
- "poseidon-resonance 0.6.0 (git+https://github.com/Quantus-Network/poseidon-resonance)",
+ "poseidon-resonance",
  "rand 0.8.5",
  "rand_chacha 0.9.0",
  "rand_core 0.6.4",
