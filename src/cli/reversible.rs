@@ -1,5 +1,11 @@
 use crate::chain::client::ChainClient;
 use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
+// to decode PendingTransfer, we need to use the following types:
+// use crate::chain::types::reversible_transfers::events::TransactionCancelled;
+// use crate::chain::types::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+// use crate::chain::types::runtime_types::pallet_reversible_transfers::PendingTransfer;
+use codec::Decode;
+
 use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
@@ -113,6 +119,21 @@ pub enum ReversibleCommands {
         #[arg(short, long)]
         password: Option<String>,
     },
+
+    /// List all pending reversible transactions for an account
+    ListPending {
+        /// Account address to query (optional, uses wallet address if not provided)
+        #[arg(short, long)]
+        address: Option<String>,
+
+        /// Wallet name (used for address if --address not provided)
+        #[arg(short, long)]
+        from: Option<String>,
+
+        /// Password for the wallet
+        #[arg(short, long)]
+        password: Option<String>,
+    },
 }
 
 /// Handle reversible transfer commands
@@ -164,6 +185,11 @@ pub async fn handle_reversible_command(command: ReversibleCommands, node_url: &s
             from,
             password,
         } => execute_transfer(&chain_client, &tx_id, &from, password).await,
+        ReversibleCommands::ListPending {
+            address,
+            from,
+            password,
+        } => list_pending_transactions(&chain_client, address, from, password).await,
     }
 }
 
@@ -464,6 +490,172 @@ async fn execute_transfer(
         "📋 Execution hash: {}",
         result_hash.extrinsic_hash.to_string().bright_yellow()
     );
+
+    Ok(())
+}
+
+/// List all pending reversible transactions for an account
+/// This really is a developer feature - real chain will have too many
+/// pending transactions to do this.
+async fn list_pending_transactions(
+    chain_client: &ChainClient,
+    address: Option<String>,
+    wallet_name: Option<String>,
+    password: Option<String>,
+) -> Result<()> {
+    log_print!("📋 Listing pending reversible transactions (Dev mode)");
+
+    // Determine which address to query
+    let target_address = match (address, wallet_name) {
+        (Some(addr), _) => {
+            // Validate the provided address
+            AccountId32::from_ss58check(&addr).map_err(|e| {
+                crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e))
+            })?;
+            addr
+        }
+        (None, Some(wallet)) => {
+            // Load wallet and get its address
+            let keypair = crate::wallet::load_keypair_from_wallet(&wallet, password, None)?;
+            keypair.to_account_id_ss58check()
+        }
+        (None, None) => {
+            return Err(crate::error::QuantusError::Generic(
+                "Either --address or --from must be provided".to_string(),
+            )
+            .into());
+        }
+    };
+
+    // Convert to AccountId32 for storage queries
+    let account_id = AccountId32::from_ss58check(&target_address)
+        .map_err(|e| crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
+
+    // Check AccountPendingIndex to see if the account has any pending transactions
+    use substrate_api_client::GetStorage;
+    match chain_client
+        .get_api()
+        .get_storage_map::<AccountId32, u32>(
+            "ReversibleTransfers",
+            "AccountPendingIndex",
+            account_id.clone(),
+            None,
+        )
+        .await
+    {
+        Ok(Some(pending_count)) => {
+            if pending_count == 0 {
+                log_print!(
+                    "📝 No pending transfers found for account: {}",
+                    target_address
+                );
+                return Ok(());
+            }
+        }
+        Ok(None) => {
+            log_print!(
+                "📝 No pending transfers found for account: {}",
+                target_address
+            );
+            return Ok(());
+        }
+        Err(_) => {
+            // Continue with scan approach if index query fails
+        }
+    }
+
+    // Get all pending transfers and find ones belonging to this account
+    match chain_client
+        .get_api()
+        .get_storage_map_key_prefix("ReversibleTransfers", "PendingTransfers")
+        .await
+    {
+        Ok(prefix) => {
+            match chain_client
+                .get_api()
+                .get_storage_keys_paged(Some(prefix), 1000, None, None)
+                .await
+            {
+                Ok(keys) => {
+                    if keys.is_empty() {
+                        log_print!("✅ No pending transfers found in the system");
+                        return Ok(());
+                    }
+
+                    let mut user_transfers = Vec::new();
+
+                    // Check each transfer
+                    for key in keys.iter() {
+                        if let Ok(Some(transfer_data)) = chain_client
+                            .get_api()
+                            .get_opaque_storage_by_key(key.clone(), None)
+                            .await
+                        {
+                            // Extract transaction hash from storage key
+                            if key.0.len() >= 32 {
+                                let tx_hash_bytes = &key.0[key.0.len() - 32..];
+                                let tx_hash = hex::encode(tx_hash_bytes);
+
+                                // Decode the 'who' field (first field in PendingTransfer)
+                                let mut data = transfer_data.as_slice();
+                                if let Ok(who) = AccountId32::decode(&mut data) {
+                                    // Check if this transfer belongs to our target account
+                                    if who.to_ss58check() == target_address {
+                                        log_print!("📋 Transaction: 0x{}", tx_hash);
+                                        log_print!(
+                                            "   👤 From: {}",
+                                            who.to_ss58check().bright_cyan()
+                                        );
+
+                                        // Try to decode amount and count from the end
+                                        let remaining_data = data;
+                                        if remaining_data.len() >= 20 {
+                                            let amount_start = remaining_data.len() - 20;
+                                            let count_start = remaining_data.len() - 4;
+
+                                            let amount_bytes =
+                                                &remaining_data[amount_start..count_start];
+                                            let count_bytes = &remaining_data[count_start..];
+
+                                            if let (Ok(amount), Ok(count)) = (
+                                                u128::decode(&mut &amount_bytes[..]),
+                                                u32::decode(&mut &count_bytes[..]),
+                                            ) {
+                                                let formatted_amount = chain_client
+                                                    .format_balance_with_symbol(amount)
+                                                    .await
+                                                    .unwrap_or_else(|_| amount.to_string());
+                                                log_print!("   💰 Amount: {}", formatted_amount);
+                                                log_print!("   📊 Count: {}", count);
+                                            }
+                                        }
+
+                                        user_transfers.push(tx_hash);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if user_transfers.is_empty() {
+                        log_print!("✅ No pending transfers found for this account");
+                    } else {
+                        log_print!("📋 Found {} pending transfer(s):", user_transfers.len());
+                        for (i, hash) in user_transfers.iter().enumerate() {
+                            log_print!("   {}. 0x{}", i + 1, hash);
+                        }
+                        log_print!("💡 Use transaction hash with 'quantus reversible cancel --tx-id <hash>' to cancel");
+                    }
+                }
+                Err(e) => {
+                    log_print!("❌ Error getting storage keys: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            log_print!("❌ Error getting storage prefix: {:?}", e);
+        }
+    }
 
     Ok(())
 }

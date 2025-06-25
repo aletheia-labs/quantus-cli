@@ -4,13 +4,15 @@ use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
 use colored::Colorize;
 
-use super::types::reversible_transfers::events::{TransactionCancelled, TransactionScheduled};
-use scale_value::Value;
+// use crate::chain::types::reversible_transfers::events::TransactionCancelled;
+// use crate::chain::types::reversible_transfers::events::TransactionScheduled;
+// use substrate_api_client::api::ExtrinsicReport;
+
 use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
-    ac_primitives::ExtrinsicSigner, api::ExtrinsicReport, extrinsic::BalancesExtrinsics,
-    rpc::JsonrpseeClient, Api, GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
+    ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
+    GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
 };
 
 /// Macro to submit any type of extrinsic without code duplication
@@ -19,10 +21,10 @@ use substrate_api_client::{
 #[macro_export]
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
+        use crate::chain::types::reversible_transfers::events::TransactionCancelled;
+        use crate::chain::types::reversible_transfers::events::TransactionScheduled;
         use codec::Decode;
         use substrate_api_client::api::ExtrinsicReport;
-        // TODO: this shouldn't be here prob
-        use crate::chain::types::reversible_transfers::events::TransactionScheduled;
 
         let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
             crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
@@ -69,22 +71,47 @@ macro_rules! submit_extrinsic {
                     event.variant_name().bright_green()
                 );
 
-                // For specific events we care about, try to decode known types
-                match (event.pallet_name(), event.variant_name()) {
-                    ("ReversibleTransfers", "TransactionScheduled") => {
-                        log_print!("      🎯 This is a TransactionScheduled event!");
-                        let mut event_bytes = event.field_bytes().clone();
-                        let scheduled_event = TransactionScheduled::decode(&mut event_bytes)
-                            .expect("Failed to decode TransactionScheduled event");
-                        log_print!(
-                            "      📅 Scheduled at block: {:?}",
-                            scheduled_event.execute_at
-                        );
+                // Try to decode as known event types automatically
+                let event_bytes = event.field_bytes().clone();
+
+                // Try TransactionScheduled
+                if let Ok(scheduled_event) = TransactionScheduled::decode(&mut event_bytes.clone())
+                {
+                    log_print!("      🎯 This is a TransactionScheduled event!");
+                    log_print!("      📅 Scheduled at: {:?}", scheduled_event.execute_at);
+                    log_print!("      🆔 Tx id: {:?}", scheduled_event.tx_id);
+                    log_print!("      👤 Who: {:?}", scheduled_event.who);
+                }
+                // Try TransactionCancelled
+                else if let Ok(cancelled_event) =
+                    TransactionCancelled::decode(&mut event_bytes.clone())
+                {
+                    log_print!("      ❌ This is a TransactionCancelled event!");
+                    log_print!("      🆔 Tx id: {:?}", cancelled_event.tx_id);
+                    log_print!("      👤 Who: {:?}", cancelled_event.who);
+                }
+                // Handle known pallet/variant combinations that don't need decoding
+                else {
+                    match (event.pallet_name(), event.variant_name()) {
+                        ("Balances", "Transfer") => {
+                            log_print!("      💰 This is a Balance Transfer event!");
+                        }
+                        ("Balances", "Withdraw") => {
+                            log_print!("      📤 This is a Balance Withdraw event!");
+                        }
+                        ("Balances", "Deposit") => {
+                            log_print!("      📥 This is a Balance Deposit event!");
+                        }
+                        ("System", "ExtrinsicSuccess") => {
+                            log_print!("      ✅ Extrinsic executed successfully!");
+                        }
+                        ("Scheduler", "Scheduled") => {
+                            log_print!("      ⏰ Task scheduled!");
+                        }
+                        _ => {
+                            log_print!("      ℹ️  Unknown event type");
+                        }
                     }
-                    ("Balances", "Transfer") => {
-                        log_print!("      💰 This is a Balance Transfer event!");
-                    }
-                    _ => {}
                 }
             }
         }
@@ -141,58 +168,6 @@ macro_rules! submit_extrinsic_with_spinner {
             }
         }
     }};
-}
-
-/// Extract transaction ID from TransactionScheduled event field values
-pub fn extract_transaction_id_from_field_values(
-    field_values: &scale_value::Composite<u32>,
-) -> Option<String> {
-    // Look for Named composite containing tx_id field
-    if let scale_value::Composite::Named(named_fields) = field_values {
-        for (field_name, field_value) in named_fields {
-            if field_name == "tx_id" {
-                // tx_id is a nested composite structure containing the 32-byte hash
-                if let scale_value::Value {
-                    value: scale_value::ValueDef::Composite(composite),
-                    ..
-                } = field_value
-                {
-                    if let scale_value::Composite::Unnamed(outer_values) = composite {
-                        if let Some(scale_value::Value {
-                            value: scale_value::ValueDef::Composite(inner_composite),
-                            ..
-                        }) = outer_values.first()
-                        {
-                            if let scale_value::Composite::Unnamed(byte_values) = inner_composite {
-                                // Extract the 32 bytes from U128 primitive values
-                                let mut tx_id_bytes = Vec::new();
-                                for byte_value in byte_values {
-                                    if let scale_value::Value {
-                                        value:
-                                            scale_value::ValueDef::Primitive(
-                                                scale_value::Primitive::U128(byte),
-                                            ),
-                                        ..
-                                    } = byte_value
-                                    {
-                                        if *byte <= 255 {
-                                            tx_id_bytes.push(*byte as u8);
-                                        }
-                                    }
-                                }
-
-                                // Convert to hex string if we have exactly 32 bytes
-                                if tx_id_bytes.len() == 32 {
-                                    return Some(format!("0x{}", hex::encode(tx_id_bytes)));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Chain client for interacting with the Quantus network

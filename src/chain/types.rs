@@ -1,3 +1,8 @@
+// This is a generated file used by a macro - do not change.
+
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use super::*;
 use dilithium_crypto::ResonanceSignatureScheme;
 use poseidon_resonance::PoseidonHasher;
