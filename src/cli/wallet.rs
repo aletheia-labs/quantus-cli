@@ -1,6 +1,7 @@
 use crate::{log_error, log_print, log_success, wallet::WalletManager};
 use clap::Subcommand;
 use colored::Colorize;
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::io::{self, Write};
 
 /// Wallet subcommands
@@ -67,12 +68,27 @@ pub enum WalletCommands {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Get the nonce (transaction count) of an account
+    Nonce {
+        /// Account address to query (optional, uses wallet address if not provided)
+        #[arg(short, long)]
+        address: Option<String>,
+
+        /// Wallet name (used for address if --address not provided)
+        #[arg(short, long, required_unless_present("address"))]
+        wallet: Option<String>,
+
+        /// Password for the wallet
+        #[arg(short, long)]
+        password: Option<String>,
+    },
 }
 
 /// Handle wallet commands
 pub async fn handle_wallet_command(
     command: WalletCommands,
-    _node_url: &str,
+    node_url: &str,
 ) -> crate::error::Result<()> {
     match command {
         WalletCommands::Create { name, password } => {
@@ -379,6 +395,51 @@ pub async fn handle_wallet_command(
                 }
                 Err(e) => {
                     log_error!("{}", format!("❌ Failed to check wallet: {}", e).red());
+                    return Err(e);
+                }
+            }
+
+            Ok(())
+        }
+
+        WalletCommands::Nonce {
+            address,
+            wallet,
+            password,
+        } => {
+            log_print!("🔢 Querying account nonce...");
+
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+
+            // Determine which address to query
+            let target_address = match (address, wallet) {
+                (Some(addr), _) => {
+                    // Validate the provided address, though get_account_nonce will also do it
+                    AccountId32::from_ss58check(&addr).map_err(|e| {
+                        crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e))
+                    })?;
+                    addr
+                }
+                (None, Some(wallet_name)) => {
+                    // Load wallet and get its address
+                    let keypair =
+                        crate::wallet::load_keypair_from_wallet(&wallet_name, password, None)?;
+                    keypair.to_account_id_ss58check()
+                }
+                (None, None) => {
+                    // This case should be prevented by clap's `required_unless_present`
+                    unreachable!("Either --address or --wallet must be provided");
+                }
+            };
+
+            log_print!("Account: {}", target_address.bright_cyan());
+
+            match chain_client.get_account_nonce(&target_address).await {
+                Ok(nonce) => {
+                    log_success!("Nonce: {}", nonce.to_string().bright_green());
+                }
+                Err(e) => {
+                    log_error!("❌ Failed to get nonce: {}", e);
                     return Err(e);
                 }
             }

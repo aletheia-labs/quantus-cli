@@ -237,6 +237,43 @@ impl ChainClient {
         }
     }
 
+    /// Get the nonce (transaction count) of an account
+    pub async fn get_account_nonce(&self, account_address: &str) -> Result<u32> {
+        log_verbose!(
+            "#️⃣ Querying nonce for account: {}",
+            account_address.bright_green()
+        );
+
+        // Parse the SS58 address to AccountId32
+        let account_id = AccountId32::from_ss58check(account_address).map_err(|e| {
+            crate::error::QuantusError::NetworkError(format!("Invalid SS58 address: {:?}", e))
+        })?;
+
+        log_debug!("🔍 Account ID: {:?}", account_id);
+
+        // Use the substrate-api-client to get account info.
+        // The nonce is part of the AccountInfo struct.
+        match self.api.get_account_info(&account_id).await {
+            Ok(Some(account_info)) => {
+                let nonce = account_info.nonce;
+                log_verbose!("✅ Account info found!");
+                log_verbose!("🔢 Nonce: {}", nonce);
+                Ok(nonce)
+            }
+            Ok(None) => {
+                log_verbose!("ℹ️  Account not found in storage, nonce is 0");
+                Ok(0)
+            }
+            Err(e) => {
+                log_verbose!("❌ API Error: {:?}", e);
+                Err(crate::error::QuantusError::NetworkError(format!(
+                    "Failed to query nonce: {:?}",
+                    e
+                )))
+            }
+        }
+    }
+
     /// Get system information from the chain
     pub async fn get_system_info(&self) -> Result<()> {
         log_verbose!("🔍 Querying system information...");
