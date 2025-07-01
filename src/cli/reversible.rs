@@ -4,6 +4,7 @@ use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
 // use crate::chain::types::reversible_transfers::events::TransactionCancelled;
 // use crate::chain::types::runtime_types::bounded_collections::bounded_vec::BoundedVec;
 // use crate::chain::types::runtime_types::pallet_reversible_transfers::PendingTransfer;
+
 use codec::Decode;
 
 use crate::error::Result;
@@ -16,7 +17,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
 use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{SubmitAndWatch, XtStatus};
+use substrate_api_client::{GetStorage, SubmitAndWatch, XtStatus};
 
 /// Reversible transfer commands
 #[derive(Subcommand, Debug)]
