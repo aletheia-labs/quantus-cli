@@ -178,12 +178,21 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
             chain_client.explore_chain_metadata(no_docs).await
         }
         Commands::Version => {
-            log_print!(
-                "🔬 {} v{}",
-                "Quantus CLI".bright_cyan().bold(),
-                env!("CARGO_PKG_VERSION").bright_yellow()
-            );
-            log_print!("🏗️  Built with Rust and love for quantum-safe blockchain");
+            log_print!("CLI Version: Quantus CLI v{}", env!("CARGO_PKG_VERSION"));
+
+            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            let node_version = chain_client.get_node_version().await?;
+            log_print!("Node Version: {}", node_version);
+
+            // You might need to implement get_runtime_version in your ChainClient
+            match chain_client.get_runtime_version().await {
+                Ok(runtime_version) => {
+                    log_print!("Runtime Version: {}", runtime_version);
+                }
+                Err(e) => {
+                    log_error!("Failed to get runtime version: {}", e);
+                }
+            }
             Ok(())
         }
     }
@@ -235,6 +244,7 @@ async fn handle_generic_call_command(
     // Execute the generic call
     generic_call::execute_generic_call(&chain_client, &pallet, &call, parsed_args, &from, tip).await
 }
+
 async fn handle_developer_command(
     command: DeveloperCommands,
     _node_url: &str,
@@ -242,7 +252,6 @@ async fn handle_developer_command(
     match command {
         DeveloperCommands::CreateTestWallets => {
             use crate::wallet::WalletManager;
-            use colored::Colorize;
 
             log_print!(
                 "🧪 {} Creating standard test wallets...",

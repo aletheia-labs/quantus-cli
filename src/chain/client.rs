@@ -1,5 +1,5 @@
 use super::quantus_runtime_config::QuantusRuntimeConfig;
-use crate::error::Result;
+use crate::error::{QuantusError, Result};
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
 use colored::Colorize;
@@ -199,6 +199,27 @@ impl ChainClient {
         Ok(Self { api })
     }
 
+    /// Get the node version string
+    pub async fn get_node_version(&self) -> Result<String> {
+        let version = self.api.get_system_version().await.map_err(|e| {
+            QuantusError::NetworkError(format!("Failed to get node version: {:?}", e))
+        })?;
+        Ok(version)
+    }
+
+    /// Get the runtime version
+    pub async fn get_runtime_version(&self) -> Result<String> {
+        let runtime_version = self.api.runtime_version();
+
+        // Format the version for display
+        let formatted_version = format!(
+            "{} (spec: {}, impl: {})",
+            runtime_version.spec_name, runtime_version.spec_version, runtime_version.impl_version
+        );
+
+        Ok(formatted_version)
+    }
+
     /// Get the balance of an account using substrate-api-client
     pub async fn get_balance(&self, account_address: &str) -> Result<u128> {
         log_verbose!(
@@ -291,14 +312,13 @@ impl ChainClient {
             token_symbol.bright_yellow(),
             token_decimals.to_string().bright_cyan()
         );
-        log_print!(
-            "   📦 Pallets: {} available",
-            pallets.len().to_string().bright_green()
-        );
+        log_print!("   📦 Pallets: {}", pallets.len().to_string());
         log_print!("   🔧 Runtime: Substrate-based");
         log_print!("   🌐 Network: Quantus Network");
 
         log_verbose!("💡 Use 'quantus metadata' to explore all available pallets and calls");
+
+        log_verbose!("✅ System info retrieved successfully!");
 
         Ok(())
     }
@@ -433,169 +453,63 @@ impl ChainClient {
     pub async fn explore_chain_metadata(&self, no_docs: bool) -> Result<()> {
         log_verbose!("🔍 Exploring chain metadata...");
 
-        // Get the metadata from the API (it's already loaded)
         let metadata = self.api.metadata();
-
-        log_print!("🏗️  Chain Metadata Information:");
-
-        // Get pallets from metadata
         let pallets: Vec<_> = metadata.pallets().collect();
-        log_print!("📦 Found {} pallets:\n", pallets.len());
 
-        for (i, pallet) in pallets.iter().enumerate() {
-            log_print!(
-                "{}. {} (Index: {})",
-                (i + 1).to_string().bright_yellow(),
-                pallet.name().bright_green(),
-                pallet.index().to_string().bright_cyan()
-            );
+        log_print!("{}", "🏛️  Available Pallets & Calls".bold().underline());
+        log_print!("");
 
-            // Show available calls for this pallet
-            if let Some(call_variants) = pallet.call_variants() {
-                log_print!(
-                    "   📞 Calls ({}):",
-                    call_variants.len().to_string().bright_blue()
-                );
+        for pallet in pallets.iter() {
+            log_print!("- Pallet: {}", pallet.name().bold().bright_blue());
 
-                for (j, call) in call_variants.iter().enumerate().take(5) {
-                    log_print!(
-                        "      {}. {}",
-                        (j + 1).to_string().bright_white(),
-                        call.name.bright_green()
-                    );
-
-                    // Show call documentation (unless --no-docs flag is used)
-                    if !no_docs {
-                        let docs = call.docs.clone();
+            // Print calls
+            if let Some(calls) = pallet.call_variants() {
+                log_print!("\t- Calls ({}):", calls.len());
+                if !no_docs {
+                    for call_variant in calls {
+                        log_print!("\t\t- {}", call_variant.name);
+                        let docs = &call_variant.docs;
                         if !docs.is_empty() {
-                            log_print!("         📝 {}", docs.join(" ").dimmed());
+                            log_verbose!("      {}", docs.join("\n      ").italic().dimmed());
                         }
-                    }
-
-                    // Show call parameters
-                    let fields: Vec<_> = call.fields.clone();
-                    if !fields.is_empty() {
-                        log_print!("         📥 Parameters:");
-                        for field in fields.iter() {
-                            let field_name = field.name.clone().unwrap_or("<unnamed>".to_string());
-
-                            // Try to get a readable type name
-                            let type_info = if let Some(type_name) = &field.type_name {
-                                type_name.clone()
-                            } else {
-                                // Try to resolve type from metadata registry
-                                match metadata.types().resolve(field.ty.id) {
-                                    Some(type_def) => {
-                                        // Try to get a human-readable type name
-                                        match type_def.type_def.clone() {
-                                            scale_info::TypeDef::Primitive(primitive) => {
-                                                format!("{:?}", primitive)
-                                            }
-                                            scale_info::TypeDef::Compact(compact) => {
-                                                format!("Compact<Type #{}>", compact.type_param.id)
-                                            }
-                                            scale_info::TypeDef::Sequence(seq) => {
-                                                format!("Vec<Type #{}>", seq.type_param.id)
-                                            }
-                                            scale_info::TypeDef::Array(arr) => {
-                                                format!(
-                                                    "[Type #{}; {}]",
-                                                    arr.type_param.id, arr.len
-                                                )
-                                            }
-                                            scale_info::TypeDef::Tuple(tuple) => {
-                                                if tuple.fields.is_empty() {
-                                                    "()".to_string()
-                                                } else {
-                                                    format!(
-                                                        "Tuple with {} fields",
-                                                        tuple.fields.len()
-                                                    )
-                                                }
-                                            }
-                                            scale_info::TypeDef::Composite(composite) => {
-                                                if let Some(path) = type_def.path.segments.last() {
-                                                    path.clone()
-                                                } else {
-                                                    format!(
-                                                        "Composite<{} fields>",
-                                                        composite.fields.len()
-                                                    )
-                                                }
-                                            }
-                                            scale_info::TypeDef::Variant(variant) => {
-                                                if let Some(path) = type_def.path.segments.last() {
-                                                    path.clone()
-                                                } else {
-                                                    format!(
-                                                        "Enum<{} variants>",
-                                                        variant.variants.len()
-                                                    )
-                                                }
-                                            }
-                                            scale_info::TypeDef::BitSequence(_) => {
-                                                "BitVec".to_string()
-                                            }
-                                        }
-                                    }
-                                    None => format!("Type #{}", field.ty.id),
-                                }
-                            };
-
-                            log_print!(
-                                "           • {}: {}",
-                                field_name.bright_cyan(),
-                                type_info.dimmed()
-                            );
-                        }
-                    } else {
-                        log_print!("         📥 No parameters");
                     }
                 }
             } else {
-                log_print!("   📞 No calls available");
+                log_print!("\t\t- No calls in this pallet.");
             }
 
             // Show storage items
-            let storage_entries: Vec<_> = pallet.storage().collect();
-            if !storage_entries.is_empty() {
+            let storage = pallet.storage();
+            log_print!("\t- Storage ({}):", storage.len());
+            for entry in storage {
+                let default_str = format!("{:?}", &entry.default);
+                let display_default = if default_str.is_empty() || default_str == "[]" {
+                    "<empty>".to_string()
+                } else if default_str.len() > 10 {
+                    format!("{}...", &default_str[..10])
+                } else {
+                    default_str
+                };
+
                 log_print!(
-                    "   💾 Storage ({}):",
-                    storage_entries.len().to_string().bright_magenta()
+                    "\t\t- Name: {} {}",
+                    entry.name,
+                    display_default.italic().dimmed()
                 );
-
-                for (j, entry) in storage_entries.iter().enumerate() {
-                    log_print!(
-                        "      {}. {}",
-                        (j + 1).to_string().bright_white(),
-                        entry.name.clone().bright_magenta()
-                    );
-                }
-            }
-
-            // Show events
-            if let Some(event_variants) = pallet.event_variants() {
-                log_print!(
-                    "   📡 Events ({}):",
-                    event_variants.len().to_string().bright_red()
+                log_verbose!("\t\t- Modifier: {:?}", entry.modifier);
+                log_verbose!("\t\t- Type: {:?}", entry.ty);
+                log_verbose!(
+                    "\t\t- Docs: {:?}",
+                    entry.docs.join("\n      ").italic().dimmed()
                 );
-
-                for (j, event) in event_variants.iter().enumerate() {
-                    log_print!(
-                        "      {}. {}",
-                        (j + 1).to_string().bright_white(),
-                        event.name.bright_red()
-                    );
-                }
             }
 
-            if i < pallets.len() - 1 {
-                log_print!();
-            }
+            log_print!("");
         }
 
-        log_print!("\n💡 Use this information to implement new extrinsic calls!");
-        log_print!("💡 Each call can be submitted using the submit_extrinsic! macro");
+        // Add a summary at the end
+        log_print!("{}", "🔍 Exploration Complete".bold());
+        log_print!("Found {} pallets.", pallets.len());
 
         Ok(())
     }
