@@ -22,7 +22,7 @@ use substrate_api_client::{
 macro_rules! submit_extrinsic {
     ($self:expr, $keypair:expr, $extrinsic:expr) => {{
         use crate::chain::types::reversible_transfers::events::TransactionCancelled;
-        use crate::chain::types::reversible_transfers::events::TransactionScheduled;
+        use crate::chain::types::reversible_transfers::events::TransactionScheduled; // this comes from subxt
         use codec::Decode;
         use substrate_api_client::api::ExtrinsicReport;
 
