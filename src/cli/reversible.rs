@@ -9,7 +9,6 @@ use codec::Decode;
 
 use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
-use chrono::prelude::*;
 use clap::Subcommand;
 use colored::Colorize;
 use qp_scheduler::BlockNumberOrTimestamp;
@@ -18,7 +17,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
 use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{GetStorage, SubmitAndWatch, XtStatus};
+use substrate_api_client::{SubmitAndWatch, XtStatus};
 
 /// Reversible transfer commands
 #[derive(Subcommand, Debug)]
