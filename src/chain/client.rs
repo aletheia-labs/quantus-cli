@@ -2,7 +2,6 @@ use super::quantus_runtime_config::QuantusRuntimeConfig;
 use crate::error::{QuantusError, Result};
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
-use chrono::{Local, TimeZone};
 use colored::Colorize;
 
 // use crate::chain::types::reversible_transfers::events::TransactionCancelled;
