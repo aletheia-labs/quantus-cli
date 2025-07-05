@@ -2,6 +2,7 @@ use super::quantus_runtime_config::QuantusRuntimeConfig;
 use crate::error::{QuantusError, Result};
 use crate::wallet::QuantumKeyPair;
 use crate::{log_debug, log_print, log_verbose};
+use chrono::{Local, TimeZone};
 use colored::Colorize;
 
 // use crate::chain::types::reversible_transfers::events::TransactionCancelled;
@@ -71,46 +72,57 @@ macro_rules! submit_extrinsic {
                     event.variant_name().bright_green()
                 );
 
-                // Try to decode as known event types automatically
-                let event_bytes = event.field_bytes().clone();
-
-                // Try TransactionScheduled
-                if let Ok(scheduled_event) = TransactionScheduled::decode(&mut event_bytes.clone())
-                {
-                    log_print!("      🎯 This is a TransactionScheduled event!");
-                    log_print!("      📅 Scheduled at: {:?}", scheduled_event.execute_at);
-                    log_print!("      🆔 Tx id: {:?}", scheduled_event.tx_id);
-                    log_print!("      👤 Who: {:?}", scheduled_event.who);
-                }
-                // Try TransactionCancelled
-                else if let Ok(cancelled_event) =
-                    TransactionCancelled::decode(&mut event_bytes.clone())
-                {
-                    log_print!("      ❌ This is a TransactionCancelled event!");
-                    log_print!("      🆔 Tx id: {:?}", cancelled_event.tx_id);
-                    log_print!("      👤 Who: {:?}", cancelled_event.who);
-                }
-                // Handle known pallet/variant combinations that don't need decoding
-                else {
-                    match (event.pallet_name(), event.variant_name()) {
-                        ("Balances", "Transfer") => {
-                            log_print!("      💰 This is a Balance Transfer event!");
+                match (event.pallet_name(), event.variant_name()) {
+                    ("Balances", "Transfer") => {
+                        log_print!("      💰 This is a Balance Transfer event!");
+                    }
+                    ("Balances", "Withdraw") => {
+                        log_print!("      📤 This is a Balance Withdraw event!");
+                    }
+                    ("Balances", "Deposit") => {
+                        log_print!("      📥 This is a Balance Deposit event!");
+                    }
+                    ("System", "ExtrinsicSuccess") => {
+                        log_print!("      ✅ Extrinsic executed successfully!");
+                    }
+                    ("Scheduler", "Scheduled") => {
+                        log_print!("      ⏰ Task scheduled!");
+                    }
+                    ("TransactionPayment", "TransactionFeePaid") => {
+                        log_print!("      💰 Transaction fee paid event!");
+                    }
+                    ("ReversibleTransfers", "TransactionScheduled") => {
+                        // log_print!("      ⏰ Transaction scheduled!");
+                        let event_bytes = event.field_bytes().clone();
+                        if let Ok(scheduled_event) = TransactionScheduled::decode(&mut event_bytes.clone())
+                        {
+                            log_print!("      🎯 This is a TransactionScheduled event!");
+                            log_print!("      📅 Scheduled at: {:?}", scheduled_event.execute_at);
+                            log_print!("      🆔 Tx id: {:?}", scheduled_event.tx_id);
+                            let from_ss58 =
+                                sp_core::crypto::AccountId32::from(scheduled_event.from.0).to_ss58check();
+                            let to_ss58 =
+                                sp_core::crypto::AccountId32::from(scheduled_event.to.0).to_ss58check();
+                            log_print!("      👤 From: {}", from_ss58);
+                            log_print!("      👤 To: {}", to_ss58);
+                            log_print!("      💰 Amount: {:?}", scheduled_event.amount);
                         }
-                        ("Balances", "Withdraw") => {
-                            log_print!("      📤 This is a Balance Withdraw event!");
+                    }
+                    ("ReversibleTransfers", "TransactionCancelled") => {
+                        // log_print!("      ❌ Transaction cancelled!");
+                        let event_bytes = event.field_bytes().clone();
+                        if let Ok(cancelled_event) =
+                            TransactionCancelled::decode(&mut event_bytes.clone())
+                        {
+                            log_print!("      ❌ This is a TransactionCancelled event!");
+                            log_print!("      🆔 Tx id: {:?}", cancelled_event.tx_id);
+                            let who_ss58 = sp_core::crypto::AccountId32::from(cancelled_event.who.0)
+                                .to_ss58check();
+                            log_print!("      👤 Who: {}", who_ss58);
                         }
-                        ("Balances", "Deposit") => {
-                            log_print!("      📥 This is a Balance Deposit event!");
-                        }
-                        ("System", "ExtrinsicSuccess") => {
-                            log_print!("      ✅ Extrinsic executed successfully!");
-                        }
-                        ("Scheduler", "Scheduled") => {
-                            log_print!("      ⏰ Task scheduled!");
-                        }
-                        _ => {
-                            log_print!("      ℹ️  Unknown event type");
-                        }
+                    }
+                    _ => {
+                        log_print!("      ℹ️  Unknown event type");
                     }
                 }
             }
