@@ -9,6 +9,7 @@ use codec::Decode;
 
 use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
+use chrono::prelude::*;
 use clap::Subcommand;
 use colored::Colorize;
 use qp_scheduler::BlockNumberOrTimestamp;
@@ -312,7 +313,21 @@ async fn schedule_transfer_with_delay(
         "📋 Transaction hash: {}",
         tx_report.extrinsic_hash.to_string().bright_yellow()
     );
-    log_print!("⏰ Transfer will execute after {} {}", delay, unit_str);
+    if unit_blocks {
+        log_print!("⏰ Transfer will execute after {} {}", delay, unit_str);
+    } else {
+        let now = chrono::Local::now();
+        let completion_time = now + chrono::Duration::seconds(delay as i64);
+        log_print!(
+            "⏰ Transfer will execute in ~{} seconds, at approximately {}",
+            delay,
+            completion_time
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+                .italic()
+                .dimmed()
+        );
+    }
 
     Ok(())
 }
