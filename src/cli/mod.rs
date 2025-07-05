@@ -5,8 +5,10 @@ use colored::Colorize;
 pub mod generic_call;
 pub mod progress_spinner;
 pub mod reversible;
+pub mod runtime;
 pub mod scheduler;
 pub mod send;
+pub mod tech_collective;
 pub mod wallet;
 
 /// Main CLI commands
@@ -46,6 +48,14 @@ pub enum Commands {
     /// Scheduler commands
     #[command(subcommand)]
     Scheduler(scheduler::SchedulerCommands),
+
+    /// Tech Collective management commands
+    #[command(subcommand)]
+    TechCollective(tech_collective::TechCollectiveCommands),
+
+    /// Runtime management commands (requires root/sudo permissions)
+    #[command(subcommand)]
+    Runtime(runtime::RuntimeCommands),
 
     /// Generic extrinsic call - call ANY pallet function!
     Call {
@@ -134,6 +144,12 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
         }
         Commands::Scheduler(scheduler_cmd) => {
             scheduler::handle_scheduler_command(scheduler_cmd, node_url).await
+        }
+        Commands::TechCollective(tech_collective_cmd) => {
+            tech_collective::handle_tech_collective_command(tech_collective_cmd, node_url).await
+        }
+        Commands::Runtime(runtime_cmd) => {
+            runtime::handle_runtime_command(runtime_cmd, node_url).await
         }
         Commands::Call {
             pallet,
