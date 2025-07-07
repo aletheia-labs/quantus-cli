@@ -24,6 +24,7 @@ macro_rules! submit_extrinsic {
         use crate::chain::types::reversible_transfers::events::TransactionCancelled;
         use crate::chain::types::reversible_transfers::events::TransactionScheduled; // this comes from subxt
         use codec::Decode;
+        use sp_core::crypto::Ss58Codec;
         use substrate_api_client::api::ExtrinsicReport;
 
         let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
