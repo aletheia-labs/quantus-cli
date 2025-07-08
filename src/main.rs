@@ -39,6 +39,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), QuantusError> {
+    sp_core::crypto::set_default_ss58_version(sp_core::crypto::Ss58AddressFormat::custom(189));
     let cli = Cli::parse();
 
     // Set up our custom logging
