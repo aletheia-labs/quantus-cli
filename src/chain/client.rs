@@ -12,7 +12,7 @@ use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
     ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
-    GetAccountInformation, SubmitAndWatch, SystemApi,
+    GetAccountInformation, GetStorage, SubmitAndWatch, SystemApi,
 };
 
 /// Macro to submit any type of extrinsic without code duplication
@@ -667,14 +667,11 @@ impl ChainClient {
 
     /// Fetch a raw value from storage by its key
     pub async fn get_storage_raw(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        use substrate_api_client::GetStorage;
         let storage_key = substrate_api_client::ac_primitives::StorageKey(key);
-        let result = self
-            .api
-            .get_storage_by_key(storage_key, None)
+        self.api
+            .get_opaque_storage_by_key(storage_key, None)
             .await
-            .map_err(|e| QuantusError::NetworkError(format!("Failed to get storage: {:?}", e)))?;
-        Ok(result)
+            .map_err(|e| QuantusError::NetworkError(format!("Failed to get storage: {:?}", e)))
     }
 }
 

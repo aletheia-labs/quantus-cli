@@ -1,5 +1,7 @@
 //! `quantus storage` subcommand
-use crate::{chain::client::ChainClient, error::QuantusError, log_print, log_success, log_verbose};
+use crate::{
+    chain::client::ChainClient, error::QuantusError, log_error, log_print, log_success, log_verbose,
+};
 use clap::Subcommand;
 use colored::Colorize;
 use sp_core::twox_128;
@@ -23,6 +25,10 @@ pub enum StorageCommands {
         /// The name of the storage item (e.g., "LastProcessedTimestamp")
         #[arg(long)]
         name: String,
+
+        /// Attempt to decode the value as a specific type (e.g., "u64", "AccountId")
+        #[arg(long)]
+        decode_as: Option<String>,
     },
 
     /// Set a storage value on the chain.
@@ -59,7 +65,11 @@ pub async fn handle_storage_command(
     node_url: &str,
 ) -> crate::error::Result<()> {
     match command {
-        StorageCommands::Get { pallet, name } => {
+        StorageCommands::Get {
+            pallet,
+            name,
+            decode_as,
+        } => {
             log_print!(
                 "🔎 Getting storage for {}::{}",
                 pallet.bright_green(),
@@ -74,8 +84,48 @@ pub async fn handle_storage_command(
 
             let result = client.get_storage_raw(key).await?;
 
-            if let Some(value) = result {
-                log_success!("Value: 0x{}", hex::encode(value).bright_yellow());
+            if let Some(value_bytes) = result {
+                log_success!("Raw Value: 0x{}", hex::encode(&value_bytes).bright_yellow());
+
+                if let Some(type_str) = decode_as {
+                    use codec::Decode;
+                    use sp_core::crypto::{AccountId32, Ss58Codec};
+
+                    log_print!("Attempting to decode as {}...", type_str.bright_cyan());
+                    match type_str.to_lowercase().as_str() {
+                        "u64" | "moment" => match u64::decode(&mut &value_bytes[..]) {
+                            Ok(decoded_value) => {
+                                log_success!(
+                                    "Decoded Value: {}",
+                                    decoded_value.to_string().bright_green()
+                                )
+                            }
+                            Err(e) => log_error!("Failed to decode as u64: {}", e),
+                        },
+                        "u128" | "balance" => match u128::decode(&mut &value_bytes[..]) {
+                            Ok(decoded_value) => {
+                                log_success!(
+                                    "Decoded Value: {}",
+                                    decoded_value.to_string().bright_green()
+                                )
+                            }
+                            Err(e) => log_error!("Failed to decode as u128: {}", e),
+                        },
+                        "accountid" | "accountid32" => {
+                            match AccountId32::decode(&mut &value_bytes[..]) {
+                                Ok(account_id) => log_success!(
+                                    "Decoded Value: {}",
+                                    account_id.to_ss58check().bright_green()
+                                ),
+                                Err(e) => log_error!("Failed to decode as AccountId32: {}", e),
+                            }
+                        }
+                        _ => {
+                            log_error!("Unsupported type for --decode-as: {}", type_str);
+                            log_print!("Supported types: u64, moment, u128, balance, accountid");
+                        }
+                    }
+                }
             } else {
                 log_print!("{}", "No value found at this storage location.".dimmed());
             }
