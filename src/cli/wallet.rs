@@ -1,4 +1,7 @@
-use crate::{log_error, log_print, log_success, wallet::WalletManager};
+use crate::{
+    log_error, log_print, log_success,
+    wallet::{password::get_mnemonic_from_user, WalletManager},
+};
 use clap::Subcommand;
 use colored::Colorize;
 use sp_core::crypto::{AccountId32, Ss58Codec};
@@ -239,18 +242,15 @@ pub async fn handle_wallet_command(
             let mnemonic_phrase = if let Some(mnemonic) = mnemonic {
                 mnemonic
             } else {
-                log_print!("Please enter your 24-word mnemonic phrase:");
-                // For now, we'll require the mnemonic to be provided via command line
-                // In a real implementation, you'd want to prompt securely for this
-                return Err(crate::error::QuantusError::Generic(
-                    "Mnemonic phrase is required. Please provide it with --mnemonic flag."
-                        .to_string(),
-                )
-                .into());
+                get_mnemonic_from_user()?
             };
 
+            // Get password from user if not provided
+            let final_password =
+                crate::wallet::password::get_wallet_password(&name, password, None)?;
+
             match wallet_manager
-                .import_wallet(&name, &mnemonic_phrase, password.as_deref())
+                .import_wallet(&name, &mnemonic_phrase, Some(&final_password))
                 .await
             {
                 Ok(wallet_info) => {
