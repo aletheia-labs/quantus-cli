@@ -12,7 +12,7 @@ use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
     ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
-    GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
+    GetAccountInformation, SubmitAndWatch, SystemApi,
 };
 
 /// Macro to submit any type of extrinsic without code duplication

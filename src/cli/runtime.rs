@@ -1,5 +1,4 @@
 use crate::chain::client::ChainClient;
-use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
 use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
@@ -7,8 +6,7 @@ use colored::Colorize;
 use std::fs;
 use std::path::PathBuf;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
-use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{SubmitAndWatch, XtStatus};
+use substrate_api_client::SubmitAndWatch;
 
 /// Runtime management commands
 #[derive(Subcommand, Debug)]

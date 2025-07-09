@@ -12,12 +12,6 @@ pub mod storage;
 pub mod tech_collective;
 pub mod wallet;
 
-pub use reversible::{handle_reversible_command, ReversibleCommands};
-pub use runtime::{handle_runtime_command, RuntimeCommands};
-pub use scheduler::{handle_scheduler_command, SchedulerCommands};
-pub use storage::StorageCommands;
-pub use tech_collective::{handle_tech_collective_command, TechCollectiveCommands};
-pub use wallet::{handle_wallet_command, WalletCommands};
 
 /// Main CLI commands
 #[derive(Subcommand, Debug)]
