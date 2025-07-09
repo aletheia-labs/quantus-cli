@@ -3,7 +3,9 @@ use crate::{
     chain::client::ChainClient, error::QuantusError, log_error, log_print, log_success, log_verbose,
 };
 use clap::Subcommand;
+use codec::Encode;
 use colored::Colorize;
+use sp_core::crypto::{AccountId32, Ss58Codec};
 use sp_core::twox_128;
 use substrate_api_client::{
     ac_compose_macros::{compose_call, compose_extrinsic},
@@ -45,9 +47,13 @@ pub enum StorageCommands {
         #[arg(long)]
         name: String,
 
-        /// The new value, as a hex-encoded string (e.g., "0xdeadbeef")
+        /// The new value. Can be a plain string if --type is used, otherwise a hex string.
         #[arg(long)]
         value: String,
+
+        /// The type of the value to be encoded (e.g., "u64", "moment", "accountid")
+        #[arg(long)]
+        r#type: Option<String>,
 
         /// The name of the wallet to sign the transaction with (must have sudo rights)
         #[arg(long)]
@@ -136,6 +142,7 @@ pub async fn handle_storage_command(
             value,
             wallet,
             password,
+            r#type,
         } => {
             log_print!(
                 "✍️  Setting storage for {}::{}",
@@ -151,10 +158,39 @@ pub async fn handle_storage_command(
             let client = ChainClient::new(node_url).await?;
             let api_with_signer = client.create_api_with_signer(&keypair)?;
 
-            // 2. Decode hex value
-            let value_hex = value.strip_prefix("0x").unwrap_or(&value);
-            let value_bytes = hex::decode(value_hex)
-                .map_err(|e| QuantusError::Generic(format!("Invalid hex value: {}", e)))?;
+            // 2. Encode the value based on the --type flag
+            let value_bytes = match r#type.as_deref() {
+                Some("u64") | Some("moment") => value
+                    .parse::<u64>()
+                    .map_err(|e| QuantusError::Generic(format!("Invalid u64 value: {}", e)))?
+                    .encode(),
+                Some("u128") | Some("balance") => value
+                    .parse::<u128>()
+                    .map_err(|e| QuantusError::Generic(format!("Invalid u128 value: {}", e)))?
+                    .encode(),
+                Some("accountid") | Some("accountid32") => AccountId32::from_ss58check(&value)
+                    .map_err(|e| {
+                        QuantusError::Generic(format!("Invalid AccountId value: {:?}", e))
+                    })?
+                    .encode(),
+                None => {
+                    // Default to hex decoding if no type is specified
+                    let value_hex = value.strip_prefix("0x").unwrap_or(&value);
+                    hex::decode(value_hex)
+                        .map_err(|e| QuantusError::Generic(format!("Invalid hex value: {}", e)))?
+                }
+                Some(unsupported) => {
+                    return Err(QuantusError::Generic(format!(
+                        "Unsupported type for --type: {}",
+                        unsupported
+                    )))
+                }
+            };
+
+            log_verbose!(
+                "Encoded value bytes: 0x{}",
+                hex::encode(&value_bytes).dimmed()
+            );
 
             // 3. Construct the storage key
             let storage_key = {
