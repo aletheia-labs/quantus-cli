@@ -1,7 +1,6 @@
 //! `quantus storage` subcommand
 use crate::{chain::client::ChainClient, error::QuantusError, log_print, log_success, log_verbose};
 use clap::Subcommand;
-use codec::Encode;
 use colored::Colorize;
 use sp_core::twox_128;
 use substrate_api_client::{
