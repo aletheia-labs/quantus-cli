@@ -223,6 +223,73 @@ quantus send --from my-wallet --to crystal_bob --amount 0.0001 --password mypass
 quantus send --from my-wallet --to crystal_bob --amount 100 --password-file /path/to/password.txt
 ```
 
+### Direct Storage Interaction (Sudo Required)
+Directly read and write raw storage values on the chain. This is a powerful and dangerous feature that requires a sudo-enabled wallet.
+
+#### Get Storage Value
+Read a raw value from storage.
+
+```bash
+# Get the raw hex value for a storage item
+quantus storage get --pallet Scheduler --name IncompleteTimestampSince
+```
+**Output:**
+```
+🔎 Getting storage for Scheduler::IncompleteTimestampSince
+✅ Raw Value: 0xb085d27111010000
+```
+
+You can also decode the value into a common type.
+
+```bash
+# Get and decode the value as a "moment" (u64 timestamp)
+quantus storage get \
+  --pallet Scheduler \
+  --name IncompleteTimestampSince \
+  --decode-as moment
+```
+**Output:**
+```
+🔎 Getting storage for Scheduler::IncompleteTimestampSince
+✅ Raw Value: 0xb085d27111010000
+Attempting to decode as moment...
+✅ Decoded Value: 1174435694000
+```
+
+#### Set Storage Value
+Write a value directly to storage.
+
+```bash
+# Set a storage item using a pre-encoded hex value
+quantus storage set \
+  --pallet Scheduler \
+  --name IncompleteTimestampSince \
+  --value 0x107f0c0199010000 \
+  --wallet my-sudo-wallet
+```
+
+For convenience, you can provide a plain value and specify its type for automatic encoding.
+
+```bash
+# Set the same value by providing the number and type
+quantus storage set \
+  --pallet Scheduler \
+  --name IncompleteTimestampSince \
+  --value 1750834698000 \
+  --type moment \
+  --wallet my-sudo-wallet
+```
+**Output:**
+```
+✍️  Setting storage for Scheduler::IncompleteTimestampSince
+
+🛑 This is a SUDO operation!
+📡 Submitting sudo extrinsic to the chain...
+🎉 Transaction submitted successfully!
+📋 Transaction hash: 0x9876543210abcdef...
+```
+
+
 **Password Convenience Options:**
 1. **Environment Variables**: Set `QUANTUS_WALLET_PASSWORD` or `QUANTUS_WALLET_PASSWORD_CRYSTAL_ALICE`
 2. **CLI Flags**: Use `--password` or `--password-file`

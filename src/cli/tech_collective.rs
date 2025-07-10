@@ -1,5 +1,4 @@
 use crate::chain::client::ChainClient;
-use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
 use crate::error::Result;
 use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
@@ -8,8 +7,7 @@ use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
-use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{GetStorage, SubmitAndWatch, XtStatus};
+use substrate_api_client::{GetStorage, SubmitAndWatch};
 
 /// Tech Collective management commands
 #[derive(Subcommand, Debug)]

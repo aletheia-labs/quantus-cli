@@ -1,5 +1,4 @@
 use crate::chain::client::ChainClient;
-use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
 // to decode PendingTransfer, we need to use the following types:
 // use crate::chain::types::reversible_transfers::events::TransactionCancelled;
 // use crate::chain::types::runtime_types::bounded_collections::bounded_vec::BoundedVec;
@@ -16,8 +15,7 @@ use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::MultiAddress;
 use substrate_api_client::ac_compose_macros::compose_extrinsic;
-use substrate_api_client::ac_primitives::ExtrinsicSigner;
-use substrate_api_client::{SubmitAndWatch, XtStatus};
+use substrate_api_client::SubmitAndWatch;
 
 /// Reversible transfer commands
 #[derive(Subcommand, Debug)]

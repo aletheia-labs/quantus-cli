@@ -12,7 +12,7 @@ use sp_core::crypto::AccountId32;
 use sp_core::crypto::Ss58Codec;
 use substrate_api_client::{
     ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
-    GetAccountInformation, SubmitAndWatch, SystemApi, XtStatus,
+    GetAccountInformation, GetStorage, SubmitAndWatch, SystemApi,
 };
 
 /// Macro to submit any type of extrinsic without code duplication
@@ -26,6 +26,9 @@ macro_rules! submit_extrinsic {
         use codec::Decode;
         use sp_core::crypto::Ss58Codec;
         use substrate_api_client::api::ExtrinsicReport;
+        use substrate_api_client::ac_primitives::ExtrinsicSigner;
+        use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
+        use substrate_api_client::XtStatus;
 
         let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
             crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
@@ -660,6 +663,15 @@ impl ChainClient {
         api_with_signer.set_signer(extrinsic_signer);
 
         Ok(api_with_signer)
+    }
+
+    /// Fetch a raw value from storage by its key
+    pub async fn get_storage_raw(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let storage_key = substrate_api_client::ac_primitives::StorageKey(key);
+        self.api
+            .get_opaque_storage_by_key(storage_key, None)
+            .await
+            .map_err(|e| QuantusError::NetworkError(format!("Failed to get storage: {:?}", e)))
     }
 }
 

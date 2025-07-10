@@ -8,8 +8,10 @@ pub mod reversible;
 pub mod runtime;
 pub mod scheduler;
 pub mod send;
+pub mod storage;
 pub mod tech_collective;
 pub mod wallet;
+
 
 /// Main CLI commands
 #[derive(Subcommand, Debug)]
@@ -48,6 +50,10 @@ pub enum Commands {
     /// Scheduler commands
     #[command(subcommand)]
     Scheduler(scheduler::SchedulerCommands),
+
+    /// Direct interaction with chain storage (Sudo required for set)
+    #[command(subcommand)]
+    Storage(storage::StorageCommands),
 
     /// Tech Collective management commands
     #[command(subcommand)]
@@ -144,6 +150,9 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
         }
         Commands::Scheduler(scheduler_cmd) => {
             scheduler::handle_scheduler_command(scheduler_cmd, node_url).await
+        }
+        Commands::Storage(storage_cmd) => {
+            storage::handle_storage_command(storage_cmd, node_url).await
         }
         Commands::TechCollective(tech_collective_cmd) => {
             tech_collective::handle_tech_collective_command(tech_collective_cmd, node_url).await
@@ -243,33 +252,26 @@ async fn handle_generic_call_command(
     }
 
     if call_data_only {
-        log_error!("❌ Call data only mode is not yet implemented");
+        log_error!("❌ Call-data-only mode is not yet implemented");
         log_print!("💡 Currently only live submission is supported");
         return Ok(());
     }
 
-    // Parse arguments if provided
-    let parsed_args: Vec<serde_json::Value> = if let Some(args_str) = args {
-        match serde_json::from_str(&args_str) {
-            Ok(args) => args,
-            Err(e) => {
-                log_error!("Failed to parse arguments as JSON: {}", e);
-                log_print!("Expected format: '[\"arg1\", \"arg2\", ...]'");
-                return Ok(());
-            }
-        }
+    let args_vec = if let Some(args_str) = args {
+        serde_json::from_str(&args_str).map_err(|e| {
+            crate::error::QuantusError::Generic(format!("Invalid JSON for arguments: {}", e))
+        })?
     } else {
-        Vec::new()
+        vec![]
     };
 
-    // Create chain client
     let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
 
-    // Execute the generic call
-    generic_call::execute_generic_call(&chain_client, &pallet, &call, parsed_args, &from, tip).await
+    generic_call::execute_generic_call(&chain_client, &pallet, &call, args_vec, &from, tip).await
 }
 
-async fn handle_developer_command(
+/// Handle developer subcommands
+pub async fn handle_developer_command(
     command: DeveloperCommands,
     _node_url: &str,
 ) -> crate::error::Result<()> {
