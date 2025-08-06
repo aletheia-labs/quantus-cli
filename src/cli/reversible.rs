@@ -1,21 +1,12 @@
-use crate::chain::client::ChainClient;
-// to decode PendingTransfer, we need to use the following types:
-// use crate::chain::types::reversible_transfers::events::TransactionCancelled;
-// use crate::chain::types::runtime_types::bounded_collections::bounded_vec::BoundedVec;
-// use crate::chain::types::runtime_types::pallet_reversible_transfers::PendingTransfer;
-
-use codec::Decode;
-
-use crate::error::Result;
-use crate::{log_error, log_print, log_success, log_verbose};
+use crate::cli::common::resolve_address;
+use crate::cli::progress_spinner::wait_for_tx_confirmation;
+use crate::{
+    chain::quantus_subxt, error::Result, log_error, log_info, log_print, log_success, log_verbose,
+};
 use clap::Subcommand;
 use colored::Colorize;
-use qp_scheduler::BlockNumberOrTimestamp;
-use sp_core::crypto::AccountId32;
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::MultiAddress;
-use substrate_api_client::ac_compose_macros::compose_extrinsic;
-use substrate_api_client::SubmitAndWatch;
+use sp_core::crypto::{AccountId32 as SpAccountId32, Ss58Codec};
+use std::str::FromStr;
 
 /// Reversible transfer commands
 #[derive(Subcommand, Debug)]
@@ -37,6 +28,10 @@ pub enum ReversibleCommands {
         /// Password for the wallet
         #[arg(short, long)]
         password: Option<String>,
+
+        /// Read password from file (for scripting)
+        #[arg(long)]
+        password_file: Option<String>,
     },
 
     /// Schedule a transfer with custom delay
@@ -64,6 +59,10 @@ pub enum ReversibleCommands {
         /// Password for the wallet
         #[arg(short, long)]
         password: Option<String>,
+
+        /// Read password from file (for scripting)
+        #[arg(long)]
+        password_file: Option<String>,
     },
 
     /// Cancel a pending reversible transaction
@@ -79,6 +78,10 @@ pub enum ReversibleCommands {
         /// Password for the wallet
         #[arg(short, long)]
         password: Option<String>,
+
+        /// Read password from file (for scripting)
+        #[arg(long)]
+        password_file: Option<String>,
     },
 
     /// Set reversibility for your account
@@ -88,7 +91,7 @@ pub enum ReversibleCommands {
         delay: Option<u64>,
 
         /// Policy: "BlockDelay" or "TimeDelay"
-        #[arg(short, long, default_value = "TimeDelay")]
+        #[arg(long, default_value = "TimeDelay")]
         policy: String,
 
         /// Optional reverser account (defaults to self)
@@ -102,21 +105,10 @@ pub enum ReversibleCommands {
         /// Password for the wallet
         #[arg(short, long)]
         password: Option<String>,
-    },
 
-    /// Execute a pending transfer (called by scheduler)
-    ExecuteTransfer {
-        /// Transaction ID to execute (hex hash)
+        /// Read password from file (for scripting)
         #[arg(long)]
-        tx_id: String,
-
-        /// Wallet name to sign with
-        #[arg(short, long)]
-        from: String,
-
-        /// Password for the wallet
-        #[arg(short, long)]
-        password: Option<String>,
+        password_file: Option<String>,
     },
 
     /// List all pending reversible transactions for an account
@@ -132,14 +124,151 @@ pub enum ReversibleCommands {
         /// Password for the wallet
         #[arg(short, long)]
         password: Option<String>,
+
+        /// Read password from file (for scripting)
+        #[arg(long)]
+        password_file: Option<String>,
     },
 }
 
-/// Handle reversible transfer commands
+/// Schedule a transfer with default delay
+pub async fn schedule_transfer(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    to_address: &str,
+    amount: u128,
+) -> Result<subxt::utils::H256> {
+    log_verbose!("🔄 Creating reversible transfer...");
+    log_verbose!(
+        "   From: {}",
+        from_keypair.to_account_id_ss58check().bright_cyan()
+    );
+    log_verbose!("   To: {}", to_address.bright_green());
+    log_verbose!("   Amount: {}", amount);
+
+    // Parse the destination address
+    let to_account_id_sp = SpAccountId32::from_ss58check(to_address).map_err(|e| {
+        crate::error::QuantusError::NetworkError(format!("Invalid destination address: {:?}", e))
+    })?;
+
+    // Convert to subxt_core AccountId32
+    let to_account_id_bytes: [u8; 32] = *to_account_id_sp.as_ref();
+    let to_account_id = subxt::ext::subxt_core::utils::AccountId32::from(to_account_id_bytes);
+
+    log_verbose!("✍️  Creating reversible transfer extrinsic...");
+
+    // Create the reversible transfer call using static API from quantus_subxt
+    let transfer_call = quantus_subxt::api::tx()
+        .reversible_transfers()
+        .schedule_transfer(
+            subxt::ext::subxt_core::utils::MultiAddress::Id(to_account_id),
+            amount,
+        );
+
+    // Submit the transaction
+    let tx_hash =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, transfer_call, None)
+            .await?;
+
+    log_verbose!("📋 Reversible transfer submitted: {:?}", tx_hash);
+
+    Ok(tx_hash)
+}
+
+/// Cancel a pending reversible transaction
+pub async fn cancel_transaction(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    tx_id: &str,
+) -> Result<subxt::utils::H256> {
+    log_verbose!("❌ Cancelling reversible transfer...");
+    log_verbose!("   Transaction ID: {}", tx_id.bright_yellow());
+
+    // Parse transaction ID using H256::from_str
+    let tx_hash = subxt::utils::H256::from_str(tx_id).map_err(|e| {
+        crate::error::QuantusError::Generic(format!("Invalid transaction ID: {:?}", e))
+    })?;
+
+    log_verbose!("✍️  Creating cancel transaction extrinsic...");
+
+    // Create the cancel transaction call using static API from quantus_subxt
+    let cancel_call = quantus_subxt::api::tx()
+        .reversible_transfers()
+        .cancel(tx_hash);
+
+    // Submit the transaction
+    let tx_hash_result =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, cancel_call, None)
+            .await?;
+
+    log_verbose!("📋 Cancel transaction submitted: {:?}", tx_hash_result);
+
+    Ok(tx_hash_result)
+}
+
+/// Schedule a transfer with custom delay
+pub async fn schedule_transfer_with_delay(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    to_address: &str,
+    amount: u128,
+    delay: u64,
+    unit_blocks: bool,
+) -> Result<subxt::utils::H256> {
+    let unit_str = if unit_blocks { "blocks" } else { "seconds" };
+    log_verbose!("🔄 Creating reversible transfer with custom delay ...");
+    log_verbose!(
+        "   From: {}",
+        from_keypair.to_account_id_ss58check().bright_cyan()
+    );
+    log_verbose!("   To: {}", to_address.bright_green());
+    log_verbose!("   Amount: {}", amount);
+    log_verbose!("   Delay: {} {}", delay, unit_str);
+
+    // Parse the destination address
+    let to_account_id_sp = SpAccountId32::from_ss58check(to_address).map_err(|e| {
+        crate::error::QuantusError::NetworkError(format!("Invalid destination address: {:?}", e))
+    })?;
+    let to_account_id_bytes: [u8; 32] = *to_account_id_sp.as_ref();
+    let to_account_id_subxt = subxt::ext::subxt_core::utils::AccountId32::from(to_account_id_bytes);
+
+    // Convert delay to proper BlockNumberOrTimestamp
+    let delay_value = if unit_blocks {
+        quantus_subxt::api::reversible_transfers::calls::types::schedule_transfer_with_delay::Delay::BlockNumber(delay as u32)
+    } else {
+        // Convert seconds to milliseconds for the runtime
+        quantus_subxt::api::reversible_transfers::calls::types::schedule_transfer_with_delay::Delay::Timestamp(delay * 1000)
+    };
+
+    log_verbose!("✍️  Creating schedule_transfer_with_delay extrinsic...");
+
+    // Create the schedule transfer with delay call using static API from quantus_subxt
+    let transfer_call = quantus_subxt::api::tx()
+        .reversible_transfers()
+        .schedule_transfer_with_delay(
+            subxt::ext::subxt_core::utils::MultiAddress::Id(to_account_id_subxt),
+            amount,
+            delay_value,
+        );
+
+    // Submit the transaction
+    let tx_hash =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, transfer_call, None)
+            .await?;
+
+    log_verbose!(
+        "📋 Reversible transfer with custom delay submitted: {:?}",
+        tx_hash
+    );
+
+    Ok(tx_hash)
+}
+
+/// Handle reversible transfer subxt commands
 pub async fn handle_reversible_command(command: ReversibleCommands, node_url: &str) -> Result<()> {
     log_print!("🔄 Reversible Transfers");
 
-    let chain_client = ChainClient::new(node_url).await?;
+    let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
 
     match command {
         ReversibleCommands::ScheduleTransfer {
@@ -147,7 +276,95 @@ pub async fn handle_reversible_command(command: ReversibleCommands, node_url: &s
             amount,
             from,
             password,
-        } => schedule_transfer(&chain_client, &to, &amount, &from, password).await,
+            password_file,
+        } => {
+            // Parse and validate the amount
+            let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
+            let (raw_amount, formatted_amount) =
+                crate::cli::send::validate_and_format_amount(&quantus_client, &amount).await?;
+
+            // Resolve the destination address (could be wallet name or SS58 address)
+            let resolved_address = resolve_address(&to)?;
+
+            log_info!(
+                "🔄 Scheduling reversible transfer of {} to {}",
+                formatted_amount,
+                resolved_address
+            );
+            log_verbose!(
+                "🚀 {} Scheduling reversible transfer {} to {} ()",
+                "REVERSIBLE".bright_cyan().bold(),
+                formatted_amount.bright_yellow().bold(),
+                resolved_address.bright_green()
+            );
+
+            // Get password securely for decryption
+            log_verbose!("📦 Using wallet: {}", from.bright_blue().bold());
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit transaction
+            let tx_hash =
+                schedule_transfer(&quantus_client, &keypair, &resolved_address, raw_amount).await?;
+
+            log_print!(
+                "✅ {} Reversible transfer scheduled! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_info!("✅ Reversible transfer scheduled and confirmed on chain");
+                log_success!(
+                    "🎉 {} Reversible transfer confirmed!",
+                    "FINISHED".bright_green().bold()
+                );
+            } else {
+                log_error!("Transaction failed!");
+            }
+
+            Ok(())
+        }
+        ReversibleCommands::Cancel {
+            tx_id,
+            from,
+            password,
+            password_file,
+        } => {
+            log_verbose!(
+                "❌ {} Cancelling reversible transfer {} ()",
+                "CANCEL".bright_red().bold(),
+                tx_id.bright_yellow().bold()
+            );
+
+            // Get password securely for decryption
+            log_verbose!("📦 Using wallet: {}", from.bright_blue().bold());
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit cancel transaction
+            let tx_hash = cancel_transaction(&quantus_client, &keypair, &tx_id).await?;
+
+            log_print!(
+                "✅ {} Cancel transaction submitted! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_success!(
+                    "🎉 {} Cancel transaction confirmed!",
+                    "FINISHED".bright_green().bold()
+                );
+            } else {
+                log_error!("Transaction failed!");
+            }
+
+            Ok(())
+        }
+
         ReversibleCommands::ScheduleTransferWithDelay {
             to,
             amount,
@@ -155,381 +372,131 @@ pub async fn handle_reversible_command(command: ReversibleCommands, node_url: &s
             unit_blocks,
             from,
             password,
+            password_file,
         } => {
-            schedule_transfer_with_delay(
-                &chain_client,
-                &to,
-                &amount,
+            // Parse and validate the amount
+            let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
+            let (raw_amount, formatted_amount) =
+                crate::cli::send::validate_and_format_amount(&quantus_client, &amount).await?;
+
+            // Resolve the destination address (could be wallet name or SS58 address)
+            let resolved_address = resolve_address(&to)?;
+
+            let unit_str = if unit_blocks { "blocks" } else { "seconds" };
+            log_verbose!(
+                "🚀 {} Scheduling reversible transfer {} to {} with {} {} delay ()",
+                "REVERSIBLE".bright_cyan().bold(),
+                formatted_amount.bright_yellow().bold(),
+                resolved_address.bright_green(),
+                delay.to_string().bright_magenta(),
+                unit_str
+            );
+
+            // Get password securely for decryption
+            log_verbose!("📦 Using wallet: {}", from.bright_blue().bold());
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit transaction
+            let tx_hash = schedule_transfer_with_delay(
+                &quantus_client,
+                &keypair,
+                &resolved_address,
+                raw_amount,
                 delay,
                 unit_blocks,
-                &from,
-                password,
             )
-            .await
+            .await?;
+
+            log_print!(
+                "✅ {} Reversible transfer with custom delay scheduled! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_success!(
+                    "🎉 {} Reversible transfer with custom delay confirmed!",
+                    "FINISHED".bright_green().bold()
+                );
+
+                if unit_blocks {
+                    log_print!("⏰ Transfer will execute after {} {}", delay, unit_str);
+                } else {
+                    let now = chrono::Local::now();
+                    let completion_time = now + chrono::Duration::seconds(delay as i64);
+                    log_print!(
+                        "⏰ Transfer will execute in ~{} seconds, at approximately {}",
+                        delay,
+                        completion_time
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string()
+                            .italic()
+                            .dimmed()
+                    );
+                }
+            } else {
+                log_error!("Transaction failed!");
+            }
+
+            Ok(())
         }
-        ReversibleCommands::Cancel {
-            tx_id,
-            from,
-            password,
-        } => cancel_transaction(&chain_client, &tx_id, &from, password).await,
+
         ReversibleCommands::SetReversibility {
             delay,
             policy,
             reverser,
             from,
             password,
-        } => set_reversibility(&chain_client, delay, &policy, reverser, &from, password).await,
-        ReversibleCommands::ExecuteTransfer {
-            tx_id,
-            from,
-            password,
-        } => execute_transfer(&chain_client, &tx_id, &from, password).await,
+            password_file,
+        } => {
+            set_reversibility(
+                &quantus_client,
+                &delay,
+                &policy,
+                &reverser,
+                &from,
+                password,
+                password_file,
+            )
+            .await
+        }
+
         ReversibleCommands::ListPending {
             address,
             from,
             password,
-        } => list_pending_transactions(&chain_client, address, from, password).await,
+            password_file,
+        } => {
+            list_pending_transactions(&quantus_client, address, from, password, password_file).await
+        }
     }
-}
-
-/// Schedule a transfer with default delay
-async fn schedule_transfer(
-    chain_client: &ChainClient,
-    to: &str,
-    amount: &str,
-    wallet_name: &str,
-    password: Option<String>,
-) -> Result<()> {
-    log_print!("📅 Scheduling transfer");
-    log_print!("To: {}", to.bright_green());
-    log_print!("Amount: {}", amount.bright_cyan());
-    log_print!("From: {}", wallet_name.bright_yellow());
-
-    let keypair = crate::wallet::load_keypair_from_wallet(&wallet_name, password, None)?;
-
-    // Parse destination address
-    let dest_account = AccountId32::from_ss58check(to).map_err(|e| {
-        crate::error::QuantusError::Generic(format!("Invalid destination address: {:?}", e))
-    })?;
-    let dest: MultiAddress<AccountId32, u32> = MultiAddress::Id(dest_account);
-
-    // Parse amount
-    let amount_value = chain_client.parse_amount(amount).await?;
-    log_verbose!("✅ Parsed amount: {} raw units", amount_value);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "ReversibleTransfers",
-        "schedule_transfer",
-        dest,
-        amount_value
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic(
-            "Failed to create schedule_transfer extrinsic".to_string(),
-        )
-    })?;
-
-    // Submit extrinsic with spinner
-    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("🎉 Transfer scheduled successfully!");
-    log_print!(
-        "📋 Transaction hash: {}",
-        tx_report.extrinsic_hash.to_string().bright_yellow()
-    );
-    log_print!("💡 Transfer will execute after the configured delay period");
-
-    Ok(())
-}
-
-/// Schedule a transfer with custom delay
-async fn schedule_transfer_with_delay(
-    chain_client: &ChainClient,
-    to: &str,
-    amount: &str,
-    delay: u64,
-    unit_blocks: bool,
-    from: &str,
-    password: Option<String>,
-) -> Result<()> {
-    let unit_str = if unit_blocks { "blocks" } else { "seconds" };
-    log_print!("📅 Scheduling transfer with custom delay");
-    log_print!("To: {}", to.bright_green());
-    log_print!("Amount: {}", amount.bright_cyan());
-    log_print!("Delay: {} {}", delay.to_string().bright_magenta(), unit_str);
-    log_print!("From: {}", from.bright_yellow());
-
-    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
-
-    // Convert delay to proper BlockNumberOrTimestamp
-    let delay_value = if unit_blocks {
-        BlockNumberOrTimestamp::BlockNumber(delay as u32)
-    } else {
-        // Convert seconds to milliseconds for the runtime
-        BlockNumberOrTimestamp::Timestamp(delay * 1000)
-    };
-
-    // Parse destination address
-    let dest_account = AccountId32::from_ss58check(to).map_err(|e| {
-        crate::error::QuantusError::Generic(format!("Invalid destination address: {:?}", e))
-    })?;
-    let dest: MultiAddress<AccountId32, u32> = MultiAddress::Id(dest_account);
-
-    // Parse amount
-    let amount_value = chain_client.parse_amount(amount).await?;
-    log_verbose!("✅ Parsed amount: {} raw units", amount_value);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "ReversibleTransfers",
-        "schedule_transfer_with_delay",
-        dest,
-        amount_value,
-        delay_value
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic(
-            "Failed to create schedule_transfer_with_delay extrinsic".to_string(),
-        )
-    })?;
-
-    // Submit extrinsic with spinner
-    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("🎉 Transfer with custom delay scheduled successfully!");
-    log_print!(
-        "📋 Transaction hash: {}",
-        tx_report.extrinsic_hash.to_string().bright_yellow()
-    );
-    if unit_blocks {
-        log_print!("⏰ Transfer will execute after {} {}", delay, unit_str);
-    } else {
-        let now = chrono::Local::now();
-        let completion_time = now + chrono::Duration::seconds(delay as i64);
-        log_print!(
-            "⏰ Transfer will execute in ~{} seconds, at approximately {}",
-            delay,
-            completion_time
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
-                .italic()
-                .dimmed()
-        );
-    }
-
-    Ok(())
-}
-
-/// Cancel a pending reversible transaction
-async fn cancel_transaction(
-    chain_client: &ChainClient,
-    tx_id: &str,
-    from: &str,
-    password: Option<String>,
-) -> Result<()> {
-    log_print!("❌ Canceling transaction");
-    log_print!("Transaction ID: {}", tx_id.bright_red());
-    log_print!("From: {}", from.bright_yellow());
-
-    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
-
-    // Parse transaction ID (hex hash)
-    let tx_hash = if tx_id.starts_with("0x") {
-        hex::decode(&tx_id[2..]).map_err(|e| {
-            crate::error::QuantusError::Generic(format!("Invalid hex transaction ID: {:?}", e))
-        })?
-    } else {
-        hex::decode(tx_id).map_err(|e| {
-            crate::error::QuantusError::Generic(format!("Invalid hex transaction ID: {:?}", e))
-        })?
-    };
-
-    if tx_hash.len() != 32 {
-        return Err(crate::error::QuantusError::Generic(
-            "Transaction ID must be 32 bytes (64 hex characters)".to_string(),
-        )
-        .into());
-    }
-
-    let mut hash_array = [0u8; 32];
-    hash_array.copy_from_slice(&tx_hash);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "ReversibleTransfers",
-        "cancel",
-        hash_array
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic("Failed to create cancel extrinsic".to_string())
-    })?;
-
-    // Submit extrinsic with spinner
-    let result_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("🎉 Transaction canceled successfully!");
-    log_print!(
-        "📋 Cancellation hash: {}",
-        result_report.extrinsic_hash.to_string().bright_yellow()
-    );
-
-    Ok(())
-}
-
-/// Set reversibility for an account
-async fn set_reversibility(
-    chain_client: &ChainClient,
-    delay: Option<u64>,
-    policy: &str,
-    reverser: Option<String>,
-    from: &str,
-    password: Option<String>,
-) -> Result<()> {
-    log_print!("⚙️  Setting reversibility");
-    log_print!("Delay: {:?}", delay);
-    log_print!("Policy: {}", policy.bright_cyan());
-    log_print!("From: {}", from.bright_yellow());
-
-    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
-
-    // Parse reverser account if provided
-    let reverser_account = if let Some(reverser_addr) = reverser {
-        Some(AccountId32::from_ss58check(&reverser_addr).map_err(|e| {
-            crate::error::QuantusError::Generic(format!("Invalid reverser address: {:?}", e))
-        })?)
-    } else {
-        None
-    };
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // For now, we'll use a simplified approach since the exact DelayPolicy enum structure isn't clear
-    // This will need to be adjusted based on the actual runtime types
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "ReversibleTransfers",
-        "set_reversibility",
-        delay,
-        policy,
-        reverser_account
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic(
-            "Failed to create set_reversibility extrinsic".to_string(),
-        )
-    })?;
-
-    // Submit extrinsic with spinner
-    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("🎉 Reversibility settings updated successfully!");
-    log_print!(
-        "📋 Transaction hash: {}",
-        tx_report.extrinsic_hash.to_string().bright_yellow()
-    );
-
-    Ok(())
-}
-
-/// Execute a pending transfer (usually called by scheduler)
-async fn execute_transfer(
-    chain_client: &ChainClient,
-    tx_id: &str,
-    from: &str,
-    password: Option<String>,
-) -> Result<()> {
-    log_print!("▶️  Executing transfer");
-    log_print!("Transaction ID: {}", tx_id.bright_green());
-    log_print!("From: {}", from.bright_yellow());
-
-    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, None)?;
-
-    // Parse transaction ID (hex hash)
-    let tx_hash = if tx_id.starts_with("0x") {
-        hex::decode(&tx_id[2..]).map_err(|e| {
-            crate::error::QuantusError::Generic(format!("Invalid hex transaction ID: {:?}", e))
-        })?
-    } else {
-        hex::decode(tx_id).map_err(|e| {
-            crate::error::QuantusError::Generic(format!("Invalid hex transaction ID: {:?}", e))
-        })?
-    };
-
-    if tx_hash.len() != 32 {
-        return Err(crate::error::QuantusError::Generic(
-            "Transaction ID must be 32 bytes (64 hex characters)".to_string(),
-        )
-        .into());
-    }
-
-    let mut hash_array = [0u8; 32];
-    hash_array.copy_from_slice(&tx_hash);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "ReversibleTransfers",
-        "execute_transfer",
-        hash_array
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic(
-            "Failed to create execute_transfer extrinsic".to_string(),
-        )
-    })?;
-
-    // Submit extrinsic with spinner
-    let result_hash = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("🎉 Transfer executed successfully!");
-    log_print!(
-        "📋 Execution hash: {}",
-        result_hash.extrinsic_hash.to_string().bright_yellow()
-    );
-
-    Ok(())
 }
 
 /// List all pending reversible transactions for an account
-/// This really is a developer feature - real chain will have too many
-/// pending transactions to do this.
 async fn list_pending_transactions(
-    chain_client: &ChainClient,
+    quantus_client: &crate::chain::client::QuantusClient,
     address: Option<String>,
     wallet_name: Option<String>,
     password: Option<String>,
+    password_file: Option<String>,
 ) -> Result<()> {
-    log_print!("📋 Listing pending reversible transactions (Dev mode)");
+    log_print!("📋 Listing pending reversible transactions");
 
     // Determine which address to query
     let target_address = match (address, wallet_name) {
         (Some(addr), _) => {
             // Validate the provided address
-            AccountId32::from_ss58check(&addr).map_err(|e| {
+            SpAccountId32::from_ss58check(&addr).map_err(|e| {
                 crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e))
             })?;
             addr
         }
         (None, Some(wallet)) => {
             // Load wallet and get its address
-            let keypair = crate::wallet::load_keypair_from_wallet(&wallet, password, None)?;
+            let keypair =
+                crate::wallet::load_keypair_from_wallet(&wallet, password, password_file)?;
             keypair.to_account_id_ss58check()
         }
         (None, None) => {
@@ -541,134 +508,278 @@ async fn list_pending_transactions(
     };
 
     // Convert to AccountId32 for storage queries
-    let account_id = AccountId32::from_ss58check(&target_address)
+    let account_id_sp = SpAccountId32::from_ss58check(&target_address)
         .map_err(|e| crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
+    let account_id_bytes: [u8; 32] = *account_id_sp.as_ref();
+    let account_id = subxt::ext::subxt_core::utils::AccountId32::from(account_id_bytes);
 
-    // Check AccountPendingIndex to see if the account has any pending transactions
-    use substrate_api_client::GetStorage;
-    match chain_client
-        .get_api()
-        .get_storage_map::<AccountId32, u32>(
-            "ReversibleTransfers",
-            "AccountPendingIndex",
-            account_id.clone(),
-            None,
-        )
+    log_verbose!("🔍 Querying pending transfers for: {}", target_address);
+
+    // Query pending transfers by sender (outgoing)
+    let sender_storage_address = crate::chain::quantus_subxt::api::storage()
+        .reversible_transfers()
+        .pending_transfers_by_sender(account_id.clone());
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let outgoing_transfers = quantus_client
+        .client()
+        .storage()
+        .at(latest_block_hash)
+        .fetch(&sender_storage_address)
         .await
-    {
-        Ok(Some(pending_count)) => {
-            if pending_count == 0 {
-                log_print!(
-                    "📝 No pending transfers found for account: {}",
-                    target_address
-                );
-                return Ok(());
+        .map_err(|e| crate::error::QuantusError::NetworkError(format!("Fetch error: {:?}", e)))?;
+
+    // Query pending transfers by recipient (incoming)
+    let recipient_storage_address = crate::chain::quantus_subxt::api::storage()
+        .reversible_transfers()
+        .pending_transfers_by_recipient(account_id);
+
+    let incoming_transfers = quantus_client
+        .client()
+        .storage()
+        .at(latest_block_hash)
+        .fetch(&recipient_storage_address)
+        .await
+        .map_err(|e| crate::error::QuantusError::NetworkError(format!("Fetch error: {:?}", e)))?;
+
+    let mut total_transfers = 0;
+
+    // Display outgoing transfers
+    if let Some(outgoing_hashes) = outgoing_transfers {
+        if !outgoing_hashes.0.is_empty() {
+            log_print!("📤 Outgoing pending transfers:");
+            for (i, hash) in outgoing_hashes.0.iter().enumerate() {
+                total_transfers += 1;
+                log_print!("   {}. 0x{}", i + 1, hex::encode(hash.as_ref()));
+
+                // Try to get transfer details
+                let transfer_storage_address = crate::chain::quantus_subxt::api::storage()
+                    .reversible_transfers()
+                    .pending_transfers(*hash);
+
+                if let Ok(Some(transfer_details)) = quantus_client
+                    .client()
+                    .storage()
+                    .at(latest_block_hash)
+                    .fetch(&transfer_storage_address)
+                    .await
+                    .map_err(|e| {
+                        crate::error::QuantusError::NetworkError(format!("Fetch error: {:?}", e))
+                    })
+                {
+                    let formatted_amount = format_amount(transfer_details.amount);
+                    log_print!(
+                        "      👤 To: {}",
+                        ss58_to_quantus_format(&format!("{}", transfer_details.to))
+                    );
+                    log_print!("      💰 Amount: {}", formatted_amount);
+                    log_print!(
+                        "      🔄 Interceptor: {}",
+                        ss58_to_quantus_format(&format!("{}", transfer_details.interceptor))
+                    );
+                }
             }
-        }
-        Ok(None) => {
-            log_print!(
-                "📝 No pending transfers found for account: {}",
-                target_address
-            );
-            return Ok(());
-        }
-        Err(_) => {
-            // Continue with scan approach if index query fails
         }
     }
 
-    // Get all pending transfers and find ones belonging to this account
-    match chain_client
-        .get_api()
-        .get_storage_map_key_prefix("ReversibleTransfers", "PendingTransfers")
-        .await
-    {
-        Ok(prefix) => {
-            match chain_client
-                .get_api()
-                .get_storage_keys_paged(Some(prefix), 1000, None, None)
-                .await
-            {
-                Ok(keys) => {
-                    if keys.is_empty() {
-                        log_print!("✅ No pending transfers found in the system");
-                        return Ok(());
-                    }
+    // Display incoming transfers
+    if let Some(incoming_hashes) = incoming_transfers {
+        if !incoming_hashes.0.is_empty() {
+            if total_transfers > 0 {
+                log_print!("");
+            }
+            log_print!("📥 Incoming pending transfers:");
+            for (i, hash) in incoming_hashes.0.iter().enumerate() {
+                total_transfers += 1;
+                log_print!("   {}. 0x{}", i + 1, hex::encode(hash.as_ref()));
 
-                    let mut user_transfers = Vec::new();
+                // Try to get transfer details
+                let transfer_storage_address = crate::chain::quantus_subxt::api::storage()
+                    .reversible_transfers()
+                    .pending_transfers(*hash);
 
-                    // Check each transfer
-                    for key in keys.iter() {
-                        if let Ok(Some(transfer_data)) = chain_client
-                            .get_api()
-                            .get_opaque_storage_by_key(key.clone(), None)
-                            .await
-                        {
-                            // Extract transaction hash from storage key
-                            if key.0.len() >= 32 {
-                                let tx_hash_bytes = &key.0[key.0.len() - 32..];
-                                let tx_hash = hex::encode(tx_hash_bytes);
-
-                                // Decode the 'who' field (first field in PendingTransfer)
-                                let mut data = transfer_data.as_slice();
-                                if let Ok(who) = AccountId32::decode(&mut data) {
-                                    // Check if this transfer belongs to our target account
-                                    if who.to_ss58check() == target_address {
-                                        log_print!("📋 Transaction: 0x{}", tx_hash);
-                                        log_print!(
-                                            "   👤 From: {}",
-                                            who.to_ss58check().bright_cyan()
-                                        );
-
-                                        // Try to decode amount and count from the end
-                                        let remaining_data = data;
-                                        if remaining_data.len() >= 20 {
-                                            let amount_start = remaining_data.len() - 20;
-                                            let count_start = remaining_data.len() - 4;
-
-                                            let amount_bytes =
-                                                &remaining_data[amount_start..count_start];
-                                            let count_bytes = &remaining_data[count_start..];
-
-                                            if let (Ok(amount), Ok(count)) = (
-                                                u128::decode(&mut &amount_bytes[..]),
-                                                u32::decode(&mut &count_bytes[..]),
-                                            ) {
-                                                let formatted_amount = chain_client
-                                                    .format_balance_with_symbol(amount)
-                                                    .await
-                                                    .unwrap_or_else(|_| amount.to_string());
-                                                log_print!("   💰 Amount: {}", formatted_amount);
-                                                log_print!("   📊 Count: {}", count);
-                                            }
-                                        }
-
-                                        user_transfers.push(tx_hash);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if user_transfers.is_empty() {
-                        log_print!("✅ No pending transfers found for this account");
-                    } else {
-                        log_print!("📋 Found {} pending transfer(s):", user_transfers.len());
-                        for (i, hash) in user_transfers.iter().enumerate() {
-                            log_print!("   {}. 0x{}", i + 1, hash);
-                        }
-                        log_print!("💡 Use transaction hash with 'quantus reversible cancel --tx-id <hash>' to cancel");
-                    }
-                }
-                Err(e) => {
-                    log_print!("❌ Error getting storage keys: {:?}", e);
+                if let Ok(Some(transfer_details)) = quantus_client
+                    .client()
+                    .storage()
+                    .at(latest_block_hash)
+                    .fetch(&transfer_storage_address)
+                    .await
+                    .map_err(|e| {
+                        crate::error::QuantusError::NetworkError(format!("Fetch error: {:?}", e))
+                    })
+                {
+                    let formatted_amount = format_amount(transfer_details.amount);
+                    log_print!(
+                        "      👤 From: {}",
+                        ss58_to_quantus_format(&format!("{}", transfer_details.from))
+                    );
+                    log_print!("      💰 Amount: {}", formatted_amount);
+                    log_print!(
+                        "      🔄 Interceptor: {}",
+                        ss58_to_quantus_format(&format!("{}", transfer_details.interceptor))
+                    );
                 }
             }
         }
-        Err(e) => {
-            log_print!("❌ Error getting storage prefix: {:?}", e);
-        }
+    }
+
+    if total_transfers == 0 {
+        log_print!(
+            "📝 No pending transfers found for account: {}",
+            target_address
+        );
+    } else {
+        log_print!("");
+        log_print!("📊 Total pending transfers: {}", total_transfers);
+        log_print!("💡 Use transaction hash with 'quantus reversible cancel --tx-id <hash>' to cancel outgoing transfers");
     }
 
     Ok(())
+}
+
+/// Set reversibility (high security) for an account
+async fn set_reversibility(
+    quantus_client: &crate::chain::client::QuantusClient,
+    delay: &Option<u64>,
+    policy: &str,
+    reverser: &Option<String>,
+    from: &str,
+    password: Option<String>,
+    password_file: Option<String>,
+) -> Result<()> {
+    log_print!("⚙️  Setting reversibility");
+    log_print!("Delay: {:?}", delay);
+    log_print!("Policy: {}", policy.bright_cyan());
+    log_print!("From: {}", from.bright_yellow());
+
+    // Load keypair
+    let from_keypair = crate::wallet::load_keypair_from_wallet(from, password, password_file)?;
+
+    // Convert delay to proper BlockNumberOrTimestamp
+    let delay_value = if let Some(delay_ms) = delay {
+        use crate::chain::quantus_subxt::api::reversible_transfers::calls::types::set_high_security::Delay;
+
+        match policy {
+            "BlockDelay" => {
+                // Convert to blocks (assuming ~6 second block time)
+                let blocks = (*delay_ms / 6000).max(1) as u32;
+                Delay::BlockNumber(blocks)
+            }
+            _ => {
+                // Default to TimeDelay (milliseconds)
+                Delay::Timestamp(*delay_ms)
+            }
+        }
+    } else {
+        return Err(crate::error::QuantusError::Generic(
+            "Delay must be specified for setting reversibility".to_string(),
+        )
+        .into());
+    };
+
+    // Parse reverser account
+    let reverser_account = if let Some(reverser_addr) = reverser {
+        // Resolve the reverser address (could be wallet name or SS58 address)
+        let resolved_reverser = resolve_address(reverser_addr)?;
+        SpAccountId32::from_ss58check(&resolved_reverser).map_err(|e| {
+            crate::error::QuantusError::Generic(format!("Invalid reverser address: {:?}", e))
+        })?
+    } else {
+        // Default to self if no reverser specified
+        SpAccountId32::from_ss58check(&from_keypair.to_account_id_ss58check()).map_err(|e| {
+            crate::error::QuantusError::Generic(format!("Invalid from address: {:?}", e))
+        })?
+    };
+
+    // Convert reverser to subxt type
+    let reverser_bytes: [u8; 32] = *reverser_account.as_ref();
+    let reverser_subxt = subxt::ext::subxt_core::utils::AccountId32::from(reverser_bytes);
+
+    // For interceptor, we'll use the same as reverser for simplicity
+    let interceptor_subxt = reverser_subxt.clone();
+
+    log_verbose!("✅ Delay: {:?}", delay_value);
+    log_verbose!("✅ Interceptor: {}", interceptor_subxt);
+    log_verbose!("✅ Recoverer: {}", reverser_subxt);
+
+    // Clone for display later
+    let interceptor_display = interceptor_subxt.clone();
+    let reverser_display = reverser_subxt.clone();
+
+    // Create the set_high_security transaction
+    let set_high_security_tx = crate::chain::quantus_subxt::api::tx()
+        .reversible_transfers()
+        .set_high_security(delay_value, interceptor_subxt, reverser_subxt);
+
+    // Submit the transaction
+    let tx_hash = crate::cli::common::submit_transaction(
+        quantus_client,
+        &from_keypair,
+        set_high_security_tx,
+        None,
+    )
+    .await?;
+
+    log_success!(
+        "✅ SUCCESS Reversibility settings updated! Hash: 0x{}",
+        hex::encode(tx_hash.as_ref())
+    );
+    log_success!("✅ 🎉 FINISHED Reversibility settings confirmed!");
+
+    // Display the settings
+    match delay {
+        Some(d) => {
+            if policy == "BlockDelay" {
+                let blocks = (d / 6000).max(1);
+                log_print!(
+                    "⏰ High security enabled with {} block delay (~{} seconds)",
+                    blocks,
+                    d / 1000
+                );
+            } else {
+                log_print!("⏰ High security enabled with {} ms delay", d);
+            }
+        }
+        None => log_print!("🔒 High security disabled"),
+    }
+
+    log_print!("🔄 Interceptor: {}", interceptor_display);
+    log_print!("🔄 Recoverer: {}", reverser_display);
+
+    Ok(())
+}
+
+/// Helper function to convert SS58 address to Quantus format
+fn ss58_to_quantus_format(ss58_address: &str) -> String {
+    // Parse the SS58 address and convert to Quantus format (custom version 189)
+    if let Ok(account_id) = sp_core::crypto::AccountId32::from_ss58check(ss58_address) {
+        // Convert to Quantus format using custom SS58 version 189
+        account_id.to_ss58check_with_version(sp_core::crypto::Ss58AddressFormat::custom(189))
+    } else {
+        // If parsing fails, return the original address
+        ss58_address.to_string()
+    }
+}
+
+/// Helper function to format amount with QUAN units
+fn format_amount(amount: u128) -> String {
+    const QUAN_DECIMALS: u128 = 1_000_000_000_000; // 10^12
+
+    if amount >= QUAN_DECIMALS {
+        let whole = amount / QUAN_DECIMALS;
+        let fractional = amount % QUAN_DECIMALS;
+
+        if fractional == 0 {
+            format!("{} QUAN", whole)
+        } else {
+            // Remove trailing zeros from fractional part
+            let fractional_str = format!("{:012}", fractional);
+            let trimmed = fractional_str.trim_end_matches('0');
+            format!("{}.{} QUAN", whole, trimmed)
+        }
+    } else {
+        format!("{} pico-QUAN", amount)
+    }
 }

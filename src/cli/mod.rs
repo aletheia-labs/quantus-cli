@@ -2,16 +2,19 @@ use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
 
+pub mod common;
+pub mod events;
 pub mod generic_call;
+pub mod metadata;
 pub mod progress_spinner;
 pub mod reversible;
 pub mod runtime;
 pub mod scheduler;
 pub mod send;
 pub mod storage;
+pub mod system;
 pub mod tech_collective;
 pub mod wallet;
-
 
 /// Main CLI commands
 #[derive(Subcommand, Debug)]
@@ -41,6 +44,10 @@ pub enum Commands {
         /// Read password from file (for scripting)
         #[arg(long)]
         password_file: Option<String>,
+
+        /// Optional tip amount to prioritize the transaction (e.g., "1", "0.5")
+        #[arg(long)]
+        tip: Option<String>,
     },
 
     /// Reversible transfer commands
@@ -113,18 +120,68 @@ pub enum Commands {
     #[command(subcommand)]
     Developer(DeveloperCommands),
 
+    /// Query events from blocks
+    Events {
+        /// Block number to query events from (full support)
+        #[arg(long)]
+        block: Option<u32>,
+
+        /// Block hash to query events from (full support)
+        #[arg(long)]
+        block_hash: Option<String>,
+
+        /// Query events from latest block
+        #[arg(long)]
+        latest: bool,
+
+        /// Query events from finalized block (full support)
+        #[arg(long)]
+        finalized: bool,
+
+        /// Filter events by pallet name (e.g., "Balances")
+        #[arg(long)]
+        pallet: Option<String>,
+
+        /// Show raw event data
+        #[arg(long)]
+        raw: bool,
+
+        /// Disable event decoding (decoding is enabled by default)
+        #[arg(long)]
+        no_decode: bool,
+    },
+
     /// Query system information
-    System,
+    System {
+        /// Show runtime version information
+        #[arg(long)]
+        runtime: bool,
+
+        /// Show metadata statistics
+        #[arg(long)]
+        metadata: bool,
+    },
 
     /// Explore chain metadata and available pallets/calls
     Metadata {
         /// Skip displaying documentation for calls
         #[arg(long)]
         no_docs: bool,
+
+        /// Show only metadata statistics
+        #[arg(long)]
+        stats_only: bool,
+
+        /// Filter by specific pallet name
+        #[arg(long)]
+        pallet: Option<String>,
     },
 
     /// Show version information
     Version,
+
+    /// Check compatibility with the connected node
+    CompatibilityCheck,
 }
 
 /// Developer subcommands
@@ -135,7 +192,11 @@ pub enum DeveloperCommands {
 }
 
 /// Execute a CLI command
-pub async fn execute_command(command: Commands, node_url: &str) -> crate::error::Result<()> {
+pub async fn execute_command(
+    command: Commands,
+    node_url: &str,
+    verbose: bool,
+) -> crate::error::Result<()> {
     match command {
         Commands::Wallet(wallet_cmd) => wallet::handle_wallet_command(wallet_cmd, node_url).await,
         Commands::Send {
@@ -144,7 +205,11 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
             amount,
             password,
             password_file,
-        } => send::handle_send_command(from, to, &amount, node_url, password, password_file).await,
+            tip,
+        } => {
+            send::handle_send_command(from, to, &amount, node_url, password, password_file, tip)
+                .await
+        }
         Commands::Reversible(reversible_cmd) => {
             reversible::handle_reversible_command(reversible_cmd, node_url).await
         }
@@ -186,48 +251,55 @@ pub async fn execute_command(command: Commands, node_url: &str) -> crate::error:
             .await
         }
         Commands::Balance { address } => {
-            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
-            let balance = chain_client.get_balance(&address).await?;
-            let formatted_balance = chain_client.format_balance_with_symbol(balance).await?;
+            let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
+
+            // Resolve address (could be wallet name or SS58 address)
+            let resolved_address = common::resolve_address(&address)?;
+
+            let balance = send::get_balance(&quantus_client, &resolved_address).await?;
+            let formatted_balance =
+                send::format_balance_with_symbol(&quantus_client, balance).await?;
             log_print!("💰 Balance: {}", formatted_balance);
             Ok(())
         }
         Commands::Developer(dev_cmd) => match dev_cmd {
             DeveloperCommands::CreateTestWallets => {
-                let _ = crate::cli::handle_developer_command(
-                    DeveloperCommands::CreateTestWallets,
-                    node_url,
-                )
-                .await;
+                let _ = crate::cli::handle_developer_command(DeveloperCommands::CreateTestWallets)
+                    .await;
                 Ok(())
             }
         },
-        Commands::System => {
-            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
-            chain_client.get_system_info().await
+        Commands::Events {
+            block,
+            block_hash,
+            latest,
+            finalized,
+            pallet,
+            raw,
+            no_decode,
+        } => {
+            events::handle_events_command(
+                block, block_hash, latest, finalized, pallet, raw, !no_decode, node_url,
+            )
+            .await
         }
-        Commands::Metadata { no_docs } => {
-            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
-            chain_client.explore_chain_metadata(no_docs).await
+        Commands::System { runtime, metadata } => {
+            if runtime || metadata {
+                system::handle_system_extended_command(node_url, runtime, metadata, verbose).await
+            } else {
+                system::handle_system_command(node_url).await
+            }
         }
+        Commands::Metadata {
+            no_docs,
+            stats_only,
+            pallet,
+        } => metadata::handle_metadata_command(node_url, no_docs, stats_only, pallet).await,
         Commands::Version => {
             log_print!("CLI Version: Quantus CLI v{}", env!("CARGO_PKG_VERSION"));
-
-            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
-            let node_version = chain_client.get_node_version().await?;
-            log_print!("Node Version: {}", node_version);
-
-            // You might need to implement get_runtime_version in your ChainClient
-            match chain_client.get_runtime_version().await {
-                Ok(runtime_version) => {
-                    log_print!("Runtime Version: {}", runtime_version);
-                }
-                Err(e) => {
-                    log_error!("Failed to get runtime version: {}", e);
-                }
-            }
             Ok(())
         }
+        Commands::CompatibilityCheck => handle_compatibility_check(node_url).await,
     }
 }
 
@@ -237,8 +309,8 @@ async fn handle_generic_call_command(
     call: String,
     args: Option<String>,
     from: String,
-    _password: Option<String>,
-    _password_file: Option<String>,
+    password: Option<String>,
+    password_file: Option<String>,
     tip: Option<String>,
     offline: bool,
     call_data_only: bool,
@@ -257,6 +329,8 @@ async fn handle_generic_call_command(
         return Ok(());
     }
 
+    let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
     let args_vec = if let Some(args_str) = args {
         serde_json::from_str(&args_str).map_err(|e| {
             crate::error::QuantusError::Generic(format!("Invalid JSON for arguments: {}", e))
@@ -265,16 +339,11 @@ async fn handle_generic_call_command(
         vec![]
     };
 
-    let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
-
-    generic_call::execute_generic_call(&chain_client, &pallet, &call, args_vec, &from, tip).await
+    generic_call::handle_generic_call(&pallet, &call, args_vec, &keypair, tip, node_url).await
 }
 
 /// Handle developer subcommands
-pub async fn handle_developer_command(
-    command: DeveloperCommands,
-    _node_url: &str,
-) -> crate::error::Result<()> {
+pub async fn handle_developer_command(command: DeveloperCommands) -> crate::error::Result<()> {
     match command {
         DeveloperCommands::CreateTestWallets => {
             use crate::wallet::WalletManager;
@@ -332,4 +401,80 @@ pub async fn handle_developer_command(
             Ok(())
         }
     }
+}
+
+/// Handle compatibility check command
+async fn handle_compatibility_check(node_url: &str) -> crate::error::Result<()> {
+    log_print!("🔍 Compatibility Check");
+    log_print!("🔗 Connecting to: {}", node_url.bright_cyan());
+    log_print!("");
+
+    // Connect to the node
+    let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
+
+    // Get runtime version
+    let runtime_version = runtime::get_runtime_version(quantus_client.client()).await?;
+
+    // Get system info for additional details
+    let chain_info = system::get_complete_chain_info(node_url).await?;
+
+    log_print!("📋 Version Information:");
+    log_print!(
+        "   • CLI Version: {}",
+        env!("CARGO_PKG_VERSION").bright_green()
+    );
+    log_print!(
+        "   • Runtime Spec Version: {}",
+        runtime_version.spec_version.to_string().bright_yellow()
+    );
+    log_print!(
+        "   • Runtime Impl Version: {}",
+        runtime_version.impl_version.to_string().bright_blue()
+    );
+    log_print!(
+        "   • Transaction Version: {}",
+        runtime_version
+            .transaction_version
+            .to_string()
+            .bright_magenta()
+    );
+
+    if let Some(name) = &chain_info.chain_name {
+        log_print!("   • Chain Name: {}", name.bright_cyan());
+    }
+
+    log_print!("");
+
+    // Check compatibility
+    let is_compatible = crate::config::is_runtime_compatible(runtime_version.spec_version);
+
+    log_print!("🔍 Compatibility Analysis:");
+    log_print!(
+        "   • Supported Runtime Versions: {:?}",
+        crate::config::COMPATIBLE_RUNTIME_VERSIONS
+    );
+    log_print!(
+        "   • Current Runtime Version: {}",
+        runtime_version.spec_version
+    );
+
+    if is_compatible {
+        log_success!("✅ COMPATIBLE - This CLI version supports the connected node");
+        log_print!("   • All features should work correctly");
+        log_print!("   • You can safely use all CLI commands");
+    } else {
+        log_error!("❌ INCOMPATIBLE - This CLI version may not work with the connected node");
+        log_print!("   • Some features may not work correctly");
+        log_print!("   • Consider updating the CLI or connecting to a compatible node");
+        log_print!(
+            "   • Supported versions: {:?}",
+            crate::config::COMPATIBLE_RUNTIME_VERSIONS
+        );
+    }
+
+    log_print!("");
+    log_print!("💡 Tip: Use 'quantus version' for quick version check");
+    log_print!("💡 Tip: Use 'quantus system --runtime' for detailed system info");
+
+    Ok(())
 }

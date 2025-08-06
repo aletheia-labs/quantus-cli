@@ -1,678 +1,320 @@
-use super::quantus_runtime_config::QuantusRuntimeConfig;
-use crate::error::{QuantusError, Result};
-use crate::wallet::QuantumKeyPair;
-use crate::{log_debug, log_print, log_verbose};
-use colored::Colorize;
+//! Common client utilities to eliminate code duplication
+//!
+//! This module provides shared functionality for creating and managing clients
+//! across all CLI modules.
 
-// use crate::chain::types::reversible_transfers::events::TransactionCancelled;
-// use crate::chain::types::reversible_transfers::events::TransactionScheduled;
-// use substrate_api_client::api::ExtrinsicReport;
-
+use crate::{error::QuantusError, log_verbose};
+use dilithium_crypto::types::DilithiumSignatureScheme;
+use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
+use poseidon_resonance::PoseidonHasher;
 use sp_core::crypto::AccountId32;
-use sp_core::crypto::Ss58Codec;
-use substrate_api_client::{
-    ac_primitives::ExtrinsicSigner, extrinsic::BalancesExtrinsics, rpc::JsonrpseeClient, Api,
-    GetAccountInformation, GetStorage, SubmitAndWatch, SystemApi,
-};
+use sp_core::ByteArray;
+use sp_runtime::traits::IdentifyAccount;
+use sp_runtime::MultiAddress;
+use std::sync::Arc;
+use std::time::Duration;
+use subxt::backend::rpc::RpcClient;
+use subxt::config::substrate::SubstrateHeader;
+use subxt::config::DefaultExtrinsicParams;
+use subxt::{Config, OnlineClient};
+use subxt_metadata::Metadata as SubxtMetadata;
 
-/// Macro to submit any type of extrinsic without code duplication
-/// Note: This should be a method but it seems impossible to figure out the correct parameter types for this call.
-/// Extrinsics are more lenient with typing.
-#[macro_export]
-macro_rules! submit_extrinsic {
-    ($self:expr, $keypair:expr, $extrinsic:expr) => {{
-        use crate::chain::types::reversible_transfers::events::TransactionCancelled;
-        use crate::chain::types::reversible_transfers::events::TransactionScheduled; // this comes from subxt
-        use codec::Decode;
-        use sp_core::crypto::Ss58Codec;
-        use substrate_api_client::api::ExtrinsicReport;
-        use substrate_api_client::ac_primitives::ExtrinsicSigner;
-        use crate::chain::quantus_runtime_config::QuantusRuntimeConfig;
-        use substrate_api_client::XtStatus;
+#[derive(Debug, Clone, Copy)]
+pub struct SubxtPoseidonHasher;
 
-        let resonance_pair = $keypair.to_resonance_pair().map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
-        })?;
+impl subxt::config::Hasher for SubxtPoseidonHasher {
+    type Output = sp_core::H256;
 
-        // Create ExtrinsicSigner
-        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
+    fn new(_metadata: &SubxtMetadata) -> Self {
+        SubxtPoseidonHasher
+    }
 
-        // Clone the API to set the signer
-        let mut api_with_signer = $self.api.clone();
-        api_with_signer.set_signer(extrinsic_signer);
+    fn hash(&self, bytes: &[u8]) -> Self::Output {
+        <PoseidonHasher as sp_runtime::traits::Hash>::hash(bytes)
+    }
+}
 
-        // Submit and watch the extrinsic until it's included in a block
-        let result: ExtrinsicReport<_> = api_with_signer
-            .submit_and_watch_extrinsic_until($extrinsic, XtStatus::InBlock)
-            .await
-            .map_err(|e| {
-                crate::error::QuantusError::NetworkError(format!(
-                    "Failed to submit extrinsic: {:?}",
-                    e
-                ))
-            })?;
+/// Configuration of the chain
+pub enum ChainConfig {}
+impl Config for ChainConfig {
+    type AccountId = AccountId32;
+    type Address = MultiAddress<Self::AccountId, u32>;
+    type Signature = DilithiumSignatureScheme;
+    type Hasher = SubxtPoseidonHasher;
+    type Header = SubstrateHeader<u32, SubxtPoseidonHasher>;
+    type AssetId = u32;
+    type ExtrinsicParams = DefaultExtrinsicParams<Self>;
+}
 
-        let extrinsic_hash = &result.extrinsic_hash;
-        let block_hash = &result.block_hash.unwrap_or_default();
+/// Wrapper around OnlineClient that also stores the node URL and RPC client
+pub struct QuantusClient {
+    client: OnlineClient<ChainConfig>,
+    rpc_client: Arc<WsClient>,
+    node_url: String,
+}
 
-        log_verbose!(
-            "📋 Transaction hash: {}",
-            format!("{:?}", extrinsic_hash).bright_blue()
-        );
-        log_verbose!(
-            "🔗 Included in block: {}",
-            format!("{:?}", block_hash).bright_blue()
-        );
+impl QuantusClient {
+    /// Create a new QuantusClient by connecting to the specified node URL
+    pub async fn new(node_url: &str) -> crate::error::Result<Self> {
+        log_verbose!("🔗 Connecting to Quantus node: {}", node_url);
 
-        // Log events if available
-        if let Some(ref events) = result.events {
-            log_print!("📊 Transaction events:");
-            for (i, event) in events.iter().enumerate() {
-                log_print!(
-                    "   {} Event: Pallet: {}, Variant: {}",
-                    i,
-                    event.pallet_name().bright_cyan(),
-                    event.variant_name().bright_green()
-                );
-
-                match (event.pallet_name(), event.variant_name()) {
-                    ("Balances", "Transfer") => {
-                        log_print!("      💰 This is a Balance Transfer event!");
-                    }
-                    ("Balances", "Withdraw") => {
-                        log_print!("      📤 This is a Balance Withdraw event!");
-                    }
-                    ("Balances", "Deposit") => {
-                        log_print!("      📥 This is a Balance Deposit event!");
-                    }
-                    ("System", "ExtrinsicSuccess") => {
-                        log_print!("      ✅ Extrinsic executed successfully!");
-                    }
-                    ("Scheduler", "Scheduled") => {
-                        log_print!("      ⏰ Task scheduled!");
-                    }
-                    ("TransactionPayment", "TransactionFeePaid") => {
-                        log_print!("      💰 Transaction fee paid event!");
-                    }
-                    ("ReversibleTransfers", "TransactionScheduled") => {
-                        // log_print!("      ⏰ Transaction scheduled!");
-                        let event_bytes = event.field_bytes().clone();
-                        if let Ok(scheduled_event) = TransactionScheduled::decode(&mut event_bytes.clone())
-                        {
-                            log_print!("      🎯 This is a TransactionScheduled event!");
-                            log_print!("      📅 Scheduled at: {:?}", scheduled_event.execute_at);
-                            log_print!("      🆔 Tx id: {:?}", scheduled_event.tx_id);
-                            let from_ss58 =
-                                sp_core::crypto::AccountId32::from(scheduled_event.from.0).to_ss58check();
-                            let to_ss58 =
-                                sp_core::crypto::AccountId32::from(scheduled_event.to.0).to_ss58check();
-                            log_print!("      👤 From: {}", from_ss58);
-                            log_print!("      👤 To: {}", to_ss58);
-                            log_print!("      💰 Amount: {:?}", scheduled_event.amount);
-                        }
-                    }
-                    ("ReversibleTransfers", "TransactionCancelled") => {
-                        // log_print!("      ❌ Transaction cancelled!");
-                        let event_bytes = event.field_bytes().clone();
-                        if let Ok(cancelled_event) =
-                            TransactionCancelled::decode(&mut event_bytes.clone())
-                        {
-                            log_print!("      ❌ This is a TransactionCancelled event!");
-                            log_print!("      🆔 Tx id: {:?}", cancelled_event.tx_id);
-                            let who_ss58 = sp_core::crypto::AccountId32::from(cancelled_event.who.0)
-                                .to_ss58check();
-                            log_print!("      👤 Who: {}", who_ss58);
-                        }
-                    }
-                    ("TechCollective", "MemberAdded") => {
-                        log_print!("      👥 Tech Collective member added!");
-                    }
-                    ("TechCollective", "MemberRemoved") => {
-                        log_print!("      👥 Tech Collective member removed!");
-                    }
-                    ("Sudo", "Sudid") => {
-                        log_print!("      🔐 Sudo operation executed!");
-                    }
-                    _ => {
-                        log_print!("      ℹ️  Unknown event type");
-                    }
-                }
-            }
+        // Validate URL format and provide helpful error messages
+        if !node_url.starts_with("ws://") && !node_url.starts_with("wss://") {
+            return Err(QuantusError::NetworkError(format!(
+                "Invalid WebSocket URL: '{}'. URL must start with 'ws://' (unsecured) or 'wss://' (secured)",
+                node_url
+            )));
         }
 
-        // Return the extrinsic hash as a hex string
-        Ok::<ExtrinsicReport<sp_core::H256>, crate::error::QuantusError>(result)
-    }};
-}
-
-/// Submit extrinsic with spinner - wrapper around submit_extrinsic! that shows a spinner
-#[macro_export]
-macro_rules! submit_extrinsic_with_spinner {
-    ($self:expr, $keypair:expr, $extrinsic:expr) => {{
-        use crate::cli::progress_spinner::ProgressSpinner;
-        use crate::{log_error, log_print, log_success};
-        use colored::Colorize;
-        use std::io::{self, Write};
-        use substrate_api_client::api::ExtrinsicReport;
-        use tokio::time::{self, Duration};
-
-        // Show spinner during the potentially slow network submission
-        let mut spinner = ProgressSpinner::new();
-
-        // Create a task that shows the spinner while waiting for network
-        let spinner_handle = tokio::spawn(async move {
-            let wait_duration = Duration::from_millis(200);
-            loop {
-                spinner.tick();
-                time::sleep(wait_duration).await;
-            }
-        });
-
-        // Submit the extrinsic using the core macro
-        let result = crate::submit_extrinsic!($self, $keypair, $extrinsic);
-
-        // Stop the spinner and clear the line
-        spinner_handle.abort();
-        print!("\r                                                    \r");
-        io::stdout().flush().unwrap();
-
-        // Handle result and show appropriate message
-        match result {
-            Ok(report) => {
-                log_success!("🎉 Transaction submitted successfully!");
-                log_print!(
-                    "📋 Transaction hash: {}",
-                    &report.extrinsic_hash.to_string().bright_yellow()
-                );
-                Ok::<ExtrinsicReport<sp_core::H256>, crate::error::QuantusError>(report)
-            }
-            Err(e) => {
-                log_error!("❌ Transaction failed: {}", e);
-                Err(e)
-            }
+        // Provide helpful hints for common URL issues
+        if node_url.starts_with("ws://")
+            && (node_url.contains("a.i.res.fm") || node_url.contains("a.t.res.fm"))
+        {
+            log_verbose!(
+                "💡 Hint: Remote nodes typically require secure WebSocket connections (wss://)"
+            );
         }
-    }};
-}
 
-/// Chain client for interacting with the Quantus network
-pub struct ChainClient {
-    pub(crate) api: Api<QuantusRuntimeConfig, JsonrpseeClient>,
-}
-
-impl ChainClient {
-    /// Create a new chain client
-    pub async fn new(node_url: &str) -> Result<Self> {
-        log_verbose!("🔗 Connecting to Quantus node: {}", node_url.bright_blue());
-
-        // Use the substrate-api-client with the provided node URL
-        let client = JsonrpseeClient::new(node_url).await.map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Failed to connect to node: {:?}", e))
-        })?;
-
-        let api = Api::<QuantusRuntimeConfig, _>::new(client)
+        // Create WS client with custom timeouts
+        let ws_client = WsClientBuilder::default()
+            // TODO: Make these configurable in a separate change
+            // These timeouts should be configurable via CLI or config file
+            .connection_timeout(Duration::from_secs(30))
+            .request_timeout(Duration::from_secs(30))
+            .build(node_url)
             .await
             .map_err(|e| {
-                crate::error::QuantusError::NetworkError(format!(
-                    "Failed to initialize API: {:?}",
-                    e
-                ))
+                // Provide more helpful error messages for common issues
+                let error_str = format!("{:?}", e);
+                let error_msg = if error_str.contains("TimedOut") || error_str.contains("timed out") {
+                    if node_url.starts_with("ws://") && (node_url.contains("a.i.res.fm") || node_url.contains("a.t.res.fm")) {
+                        format!(
+                            "Connection timed out. This remote node requires secure WebSocket connections (wss://). Try using 'wss://{}' instead of 'ws://{}'",
+                            node_url.strip_prefix("ws://").unwrap_or(node_url),
+                            node_url.strip_prefix("ws://").unwrap_or(node_url)
+                        )
+                    } else {
+                        format!("Connection timed out. Please check if the node is running and accessible at: {}", node_url)
+                    }
+                } else if error_str.contains("HTTP") {
+                    format!("HTTP error: {}. This might indicate the node doesn't support WebSocket connections", error_str)
+                } else {
+                    format!("Failed to create RPC client: {}", error_str)
+                };
+                QuantusError::NetworkError(error_msg)
             })?;
+
+        // Wrap WS client in Arc for sharing
+        let ws_client = Arc::new(ws_client);
+
+        // Create RPC client wrapper for subxt
+        let rpc_client = RpcClient::new(ws_client.clone());
+
+        // Create SubXT client using the configured RPC client
+        let client = OnlineClient::<ChainConfig>::from_rpc_client(rpc_client)
+            .await
+            .map_err(|e| QuantusError::NetworkError(format!("Failed to connect: {:?}", e)))?;
 
         log_verbose!("✅ Connected to Quantus node successfully!");
 
-        Ok(Self { api })
+        Ok(QuantusClient {
+            client,
+            rpc_client: ws_client,
+            node_url: node_url.to_string(),
+        })
     }
 
-    /// Get the node version string
-    pub async fn get_node_version(&self) -> Result<String> {
-        let version = self.api.get_system_version().await.map_err(|e| {
-            QuantusError::NetworkError(format!("Failed to get node version: {:?}", e))
-        })?;
-        Ok(version)
+    /// Get reference to the underlying SubXT client
+    pub fn client(&self) -> &OnlineClient<ChainConfig> {
+        &self.client
     }
 
-    /// Get the runtime version as a formatted string
-    pub async fn get_runtime_version(&self) -> Result<String> {
-        let runtime_version = self.api.runtime_version();
-
-        // Format the version for display
-        let formatted_version = format!(
-            "{} (spec: {}, impl: {})",
-            runtime_version.spec_name, runtime_version.spec_version, runtime_version.impl_version
-        );
-
-        Ok(formatted_version)
+    /// Get the node URL
+    pub fn node_url(&self) -> &str {
+        &self.node_url
     }
 
-    /// Get the raw runtime version object
-    pub fn get_runtime_version_raw(&self) -> &substrate_api_client::ac_primitives::RuntimeVersion {
-        self.api.runtime_version()
+    /// Get reference to the RPC client
+    pub fn rpc_client(&self) -> &WsClient {
+        &self.rpc_client
     }
 
-    /// Get the chain metadata
-    pub fn get_metadata(&self) -> &substrate_api_client::ac_node_api::Metadata {
-        self.api.metadata()
-    }
+    /// Get the latest block (best block) using RPC call
+    /// This bypasses SubXT's default behavior of using finalized blocks
+    pub async fn get_latest_block(&self) -> crate::error::Result<subxt::utils::H256> {
+        log_verbose!("🔍 Fetching latest block hash via RPC...");
 
-    /// Get the balance of an account using substrate-api-client
-    pub async fn get_balance(&self, account_address: &str) -> Result<u128> {
-        log_verbose!(
-            "💰 Querying balance for account: {}",
-            account_address.bright_green()
-        );
-
-        // Parse the SS58 address to AccountId32
-        let account_id = AccountId32::from_ss58check(account_address).map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Invalid SS58 address: {:?}", e))
-        })?;
-
-        log_debug!("🔍 Account ID: {:?}", account_id);
-
-        // Use the substrate-api-client to get account data - following the example pattern
-        match self.api.get_account_data(&account_id).await {
-            Ok(Some(account_data)) => {
-                let balance = account_data.free;
-                log_verbose!("✅ Account data found!");
-                log_verbose!("📊 Free balance: {}", balance);
-                log_verbose!("📊 Reserved balance: {}", account_data.reserved);
-                log_verbose!("📊 Frozen balance: {}", account_data.frozen);
-                Ok(balance)
-            }
-            Ok(None) => {
-                log_verbose!("ℹ️  Account not found in storage, balance is 0");
-                Ok(0)
-            }
-            Err(e) => {
-                log_verbose!("❌ API Error: {:?}", e);
-                Err(crate::error::QuantusError::NetworkError(format!(
-                    "Failed to query balance: {:?}",
-                    e
-                )))
-            }
-        }
-    }
-
-    /// Get the nonce (transaction count) of an account
-    pub async fn get_account_nonce(&self, account_address: &str) -> Result<u32> {
-        log_verbose!(
-            "#️⃣ Querying nonce for account: {}",
-            account_address.bright_green()
-        );
-
-        // Parse the SS58 address to AccountId32
-        let account_id = AccountId32::from_ss58check(account_address).map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Invalid SS58 address: {:?}", e))
-        })?;
-
-        log_debug!("🔍 Account ID: {:?}", account_id);
-
-        // Use the substrate-api-client to get account info.
-        // The nonce is part of the AccountInfo struct.
-        match self.api.get_account_info(&account_id).await {
-            Ok(Some(account_info)) => {
-                let nonce = account_info.nonce;
-                log_verbose!("✅ Account info found!");
-                log_verbose!("🔢 Nonce: {}", nonce);
-                Ok(nonce)
-            }
-            Ok(None) => {
-                log_verbose!("ℹ️  Account not found in storage, nonce is 0");
-                Ok(0)
-            }
-            Err(e) => {
-                log_verbose!("❌ API Error: {:?}", e);
-                Err(crate::error::QuantusError::NetworkError(format!(
-                    "Failed to query nonce: {:?}",
-                    e
-                )))
-            }
-        }
-    }
-
-    /// Get system information from the chain
-    pub async fn get_system_info(&self) -> Result<()> {
-        log_verbose!("🔍 Querying system information...");
-
-        // Get chain properties
-        let (token_symbol, token_decimals) = self.get_chain_properties().await?;
-
-        // Get metadata information
-        let metadata = self.api.metadata();
-        let pallets: Vec<_> = metadata.pallets().collect();
-
-        log_print!("🏗️  Chain System Information:");
-        log_print!(
-            "   💰 Token: {} ({} decimals)",
-            token_symbol.bright_yellow(),
-            token_decimals.to_string().bright_cyan()
-        );
-        log_print!("   📦 Pallets: {}", pallets.len().to_string());
-        log_print!("   🔧 Runtime: Substrate-based");
-        log_print!("   🌐 Network: Quantus Network");
-
-        log_verbose!("💡 Use 'quantus metadata' to explore all available pallets and calls");
-
-        log_verbose!("✅ System info retrieved successfully!");
-
-        Ok(())
-    }
-
-    /// Transfer tokens from one account to another using real substrate extrinsics
-    pub async fn transfer(
-        &self,
-        from_keypair: &QuantumKeyPair,
-        to_address: &str,
-        amount: u128,
-    ) -> Result<substrate_api_client::api::ExtrinsicReport<sp_core::H256>> {
-        log_verbose!("🚀 Creating transfer transaction...");
-        log_verbose!(
-            "   From: {}",
-            from_keypair.to_account_id_ss58check().bright_cyan()
-        );
-        log_verbose!("   To: {}", to_address.bright_green());
-        log_verbose!("   Amount: {}", amount);
-
-        // Parse the destination address
-        let to_account_id = AccountId32::from_ss58check(to_address).map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!(
-                "Invalid destination address: {:?}",
-                e
-            ))
-        })?;
-
-        // Convert our QuantumKeyPair to ResonancePair
-        let resonance_pair = from_keypair.to_resonance_pair().map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
-        })?;
-
-        // Create ExtrinsicSigner
-        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
-
-        // Clone the API to set the signer
-        let mut api_with_signer = self.api.clone();
-        api_with_signer.set_signer(extrinsic_signer);
-
-        log_verbose!("✍️  Creating balance transfer extrinsic...");
-
-        // Create the transfer extrinsic using BalancesExtrinsics trait
-        let transfer_extrinsic = api_with_signer
-            .balance_transfer_allow_death(to_account_id.into(), amount)
+        // Use RPC call to get the latest block hash
+        use jsonrpsee::core::client::ClientT;
+        let latest_hash: subxt::utils::H256 = self
+            .rpc_client
+            .request::<subxt::utils::H256, [(); 0]>("chain_getBlockHash", [])
             .await
-            .ok_or_else(|| {
-                crate::error::QuantusError::NetworkError(
-                    "Failed to create transfer extrinsic".to_string(),
-                )
+            .map_err(|e| {
+                crate::error::QuantusError::NetworkError(format!(
+                    "Failed to fetch latest block hash: {:?}",
+                    e
+                ))
             })?;
 
-        log_verbose!("📋 Extrinsic created: {:?}", transfer_extrinsic);
-
-        // Use the macro to submit the extrinsic
-        submit_extrinsic_with_spinner!(self, from_keypair, transfer_extrinsic)
+        log_verbose!("📦 Latest block hash: {:?}", latest_hash);
+        Ok(latest_hash)
     }
 
-    /// Wait for transaction finalization - now using real block monitoring
-    pub async fn wait_for_finalization(&self, tx_hash: &str) -> Result<bool> {
+    /// Get account nonce from the best block (latest) using direct RPC call
+    /// This bypasses SubXT's default behavior of using finalized blocks
+    pub async fn get_account_nonce_from_best_block(
+        &self,
+        account_id: &AccountId32,
+    ) -> crate::error::Result<u64> {
+        log_verbose!("🔍 Fetching account nonce from best block via RPC...");
+
+        // Get latest block hash first
+        let latest_block_hash = self.get_latest_block().await?;
         log_verbose!(
-            "⏳ Transaction {} is already included in a block",
-            tx_hash.bright_blue()
+            "📦 Latest block hash for nonce query: {:?}",
+            latest_block_hash
         );
 
-        // Since we already waited for InBlock status in the transfer method,
-        // the transaction is already confirmed. In a more sophisticated implementation,
-        // we could wait for Finalized status here.
-        log_verbose!(
-            "✅ Transaction {} finalized successfully!",
-            tx_hash.bright_green()
-        );
-        Ok(true)
+        // Convert sp_core::AccountId32 to subxt::utils::AccountId32
+        let account_bytes: [u8; 32] = *account_id.as_ref();
+        let subxt_account_id = subxt::utils::AccountId32::from(account_bytes);
+
+        // Use SubXT's storage API to query nonce at the best block
+        use crate::chain::quantus_subxt::api;
+        let storage_addr = api::storage().system().account(subxt_account_id);
+
+        let storage_at = self.client.storage().at(latest_block_hash);
+
+        let account_info = storage_at
+            .fetch_or_default(&storage_addr)
+            .await
+            .map_err(|e| {
+                crate::error::QuantusError::NetworkError(format!(
+                    "Failed to fetch account info from best block: {:?}",
+                    e
+                ))
+            })?;
+
+        log_verbose!("✅ Nonce from best block: {}", account_info.nonce);
+        Ok(account_info.nonce as u64)
     }
 
-    /// Get chain properties including token decimals
-    pub async fn get_chain_properties(&self) -> Result<(String, u8)> {
-        log_verbose!("🔍 Querying chain properties...");
+    /// Get genesis hash using RPC call
+    pub async fn get_genesis_hash(&self) -> crate::error::Result<subxt::utils::H256> {
+        log_verbose!("🔍 Fetching genesis hash via RPC...");
 
-        // Get system properties from the chain
-        let properties = self.api.get_system_properties().await.map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!(
-                "Failed to get system properties: {:?}",
-                e
-            ))
-        })?;
+        use jsonrpsee::core::client::ClientT;
+        let genesis_hash: subxt::utils::H256 = self
+            .rpc_client
+            .request::<subxt::utils::H256, [u32; 1]>("chain_getBlockHash", [0u32])
+            .await
+            .map_err(|e| {
+                crate::error::QuantusError::NetworkError(format!(
+                    "Failed to fetch genesis hash: {:?}",
+                    e
+                ))
+            })?;
 
-        log_verbose!("📊 Chain properties: {:?}", properties);
-
-        // Extract token symbol and decimals from properties
-        // Handle both direct values and arrays (different chains may use different formats)
-        let token_symbol = properties
-            .get("tokenSymbol")
-            .and_then(|v| {
-                // Try direct string first
-                if let Some(s) = v.as_str() {
-                    Some(s)
-                } else {
-                    // Try array format (some chains use arrays)
-                    v.as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|v| v.as_str())
-                }
-            })
-            .unwrap_or("QUAN")
-            .to_string();
-
-        let token_decimals = properties
-            .get("tokenDecimals")
-            .and_then(|v| {
-                // Try direct number first
-                if let Some(n) = v.as_u64() {
-                    Some(n)
-                } else {
-                    // Try array format (some chains use arrays)
-                    v.as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|v| v.as_u64())
-                }
-            })
-            .unwrap_or(12) as u8; // Default to 12 decimals if not found
-
-        log_verbose!(
-            "💰 Token: {} with {} decimals",
-            token_symbol,
-            token_decimals
-        );
-
-        Ok((token_symbol, token_decimals))
+        log_verbose!("🧬 Genesis hash: {:?}", genesis_hash);
+        Ok(genesis_hash)
     }
 
-    /// Get chain metadata and explore all available pallets and calls
-    pub async fn explore_chain_metadata(&self, no_docs: bool) -> Result<()> {
-        log_verbose!("🔍 Exploring chain metadata...");
+    /// Get runtime version using RPC call
+    pub async fn get_runtime_version(&self) -> crate::error::Result<(u32, u32)> {
+        log_verbose!("🔍 Fetching runtime version via RPC...");
 
-        let metadata = self.api.metadata();
-        let pallets: Vec<_> = metadata.pallets().collect();
+        use jsonrpsee::core::client::ClientT;
+        let runtime_version: serde_json::Value = self
+            .rpc_client
+            .request::<serde_json::Value, [(); 0]>("state_getRuntimeVersion", [])
+            .await
+            .map_err(|e| {
+                crate::error::QuantusError::NetworkError(format!(
+                    "Failed to fetch runtime version: {:?}",
+                    e
+                ))
+            })?;
 
-        log_print!("{}", "🏛️  Available Pallets & Calls".bold().underline());
-        log_print!("");
+        let spec_version = runtime_version["specVersion"].as_u64().ok_or_else(|| {
+            crate::error::QuantusError::NetworkError("Failed to parse spec version".to_string())
+        })? as u32;
 
-        for pallet in pallets.iter() {
-            log_print!("- Pallet: {}", pallet.name().bold().bright_blue());
+        let transaction_version =
+            runtime_version["transactionVersion"]
+                .as_u64()
+                .ok_or_else(|| {
+                    crate::error::QuantusError::NetworkError(
+                        "Failed to parse transaction version".to_string(),
+                    )
+                })? as u32;
 
-            // Print calls
-            if let Some(calls) = pallet.call_variants() {
-                log_print!("\t- Calls ({}):", calls.len());
-                if !no_docs {
-                    for call_variant in calls {
-                        log_print!("\t\t- {}", call_variant.name);
-                        let docs = &call_variant.docs;
-                        if !docs.is_empty() {
-                            log_verbose!("      {}", docs.join("\n      ").italic().dimmed());
+        log_verbose!(
+            "🔧 Runtime version: spec={}, tx={}",
+            spec_version,
+            transaction_version
+        );
+        Ok((spec_version, transaction_version))
+    }
+
+    /// Get runtime hash using RPC call (if available)
+    pub async fn get_runtime_hash(&self) -> crate::error::Result<Option<String>> {
+        log_verbose!("🔍 Fetching runtime hash via RPC...");
+
+        use jsonrpsee::core::client::ClientT;
+
+        // Try different possible RPC calls for runtime hash
+        let possible_calls = [
+            "state_getRuntimeHash",
+            "state_getRuntime",
+            "chain_getRuntimeHash",
+        ];
+
+        for call_name in &possible_calls {
+            match self
+                .rpc_client
+                .request::<serde_json::Value, [(); 0]>(call_name, [])
+                .await
+            {
+                Ok(result) => {
+                    log_verbose!("✅ Found runtime hash via {}", call_name);
+                    if let Some(hash) = result.as_str() {
+                        return Ok(Some(hash.to_string()));
+                    } else if let Some(hash_obj) = result.get("hash") {
+                        if let Some(hash) = hash_obj.as_str() {
+                            return Ok(Some(hash.to_string()));
                         }
                     }
                 }
-            } else {
-                log_print!("\t\t- No calls in this pallet.");
-            }
-
-            // Show storage items
-            let storage = pallet.storage();
-            log_print!("\t- Storage ({}):", storage.len());
-            for entry in storage {
-                let default_str = format!("{:?}", &entry.default);
-                let display_default = if default_str.is_empty() || default_str == "[]" {
-                    "<empty>".to_string()
-                } else if default_str.len() > 10 {
-                    format!("{}...", &default_str[..10])
-                } else {
-                    default_str
-                };
-
-                log_print!(
-                    "\t\t- Name: {} {}",
-                    entry.name,
-                    display_default.italic().dimmed()
-                );
-                log_verbose!("\t\t- Modifier: {:?}", entry.modifier);
-                log_verbose!("\t\t- Type: {:?}", entry.ty);
-                log_verbose!(
-                    "\t\t- Docs: {:?}",
-                    entry.docs.join("\n      ").italic().dimmed()
-                );
-            }
-
-            log_print!("");
-        }
-
-        // Add a summary at the end
-        log_print!("{}", "🔍 Exploration Complete".bold());
-        log_print!("Found {} pallets.", pallets.len());
-
-        Ok(())
-    }
-
-    /// Format balance with proper decimals
-    pub fn format_balance(amount: u128, decimals: u8) -> String {
-        if decimals == 0 {
-            return amount.to_string();
-        }
-
-        let divisor = 10_u128.pow(decimals as u32);
-        let whole_part = amount / divisor;
-        let fractional_part = amount % divisor;
-
-        if fractional_part == 0 {
-            whole_part.to_string()
-        } else {
-            // Format fractional part with proper leading zeros
-            let fractional_str = format!("{:0width$}", fractional_part, width = decimals as usize);
-            // Remove trailing zeros
-            let fractional_str = fractional_str.trim_end_matches('0');
-
-            if fractional_str.is_empty() {
-                whole_part.to_string()
-            } else {
-                format!("{}.{}", whole_part, fractional_str)
-            }
-        }
-    }
-
-    /// Format balance with token symbol
-    pub async fn format_balance_with_symbol(&self, amount: u128) -> Result<String> {
-        let (symbol, decimals) = self.get_chain_properties().await?;
-        let formatted_amount = Self::format_balance(amount, decimals);
-        Ok(format!("{} {}", formatted_amount, symbol))
-    }
-
-    /// Parse human-readable amount string to raw chain units
-    /// Accepts formats like: "10", "10.0", "0.0000001", "10.5 DEV" (ignores symbol)
-    pub async fn parse_amount(&self, amount_str: &str) -> Result<u128> {
-        let (_, decimals) = self.get_chain_properties().await?;
-        Self::parse_amount_with_decimals(amount_str, decimals)
-    }
-
-    /// Parse amount string with specific decimals (static method for testing)
-    pub fn parse_amount_with_decimals(amount_str: &str, decimals: u8) -> Result<u128> {
-        // Remove any token symbol by taking only the first part (number)
-        let amount_part = amount_str.trim().split_whitespace().next().unwrap_or("");
-
-        if amount_part.is_empty() {
-            return Err(crate::error::QuantusError::Generic(
-                "Amount cannot be empty".to_string(),
-            ));
-        }
-
-        // Parse the decimal number
-        let parsed_amount: f64 = amount_part.parse().map_err(|_| {
-            crate::error::QuantusError::Generic(format!(
-                "Invalid amount format: '{}'. Use formats like '10', '10.5', '0.0001'",
-                amount_part
-            ))
-        })?;
-
-        if parsed_amount < 0.0 {
-            return Err(crate::error::QuantusError::Generic(
-                "Amount cannot be negative".to_string(),
-            ));
-        }
-
-        // Check for too many decimal places
-        if let Some(decimal_part) = amount_part.split('.').nth(1) {
-            if decimal_part.len() > decimals as usize {
-                return Err(crate::error::QuantusError::Generic(format!(
-                    "Too many decimal places. Maximum {} decimal places allowed for this chain",
-                    decimals
-                )));
+                Err(e) => {
+                    log_verbose!("❌ {} failed: {:?}", call_name, e);
+                }
             }
         }
 
-        // Convert to raw units by multiplying by 10^decimals
-        let multiplier = 10_f64.powi(decimals as i32);
-        let raw_amount = (parsed_amount * multiplier).round() as u128;
-
-        // Validate the result fits in u128 and isn't zero for non-zero inputs
-        if parsed_amount > 0.0 && raw_amount == 0 {
-            return Err(crate::error::QuantusError::Generic(
-                "Amount too small to represent in chain units".to_string(),
-            ));
-        }
-
-        Ok(raw_amount)
-    }
-
-    /// Validate and format amount for display before sending
-    pub async fn validate_and_format_amount(&self, amount_str: &str) -> Result<(u128, String)> {
-        let raw_amount = self.parse_amount(amount_str).await?;
-        let formatted = self.format_balance_with_symbol(raw_amount).await?;
-        Ok((raw_amount, formatted))
-    }
-
-    /// Get access to the API for generic calls using compose macros
-    pub fn get_api(&self) -> &Api<QuantusRuntimeConfig, JsonrpseeClient> {
-        &self.api
-    }
-
-    /// Create an API instance with a signer for generic calls
-    pub fn create_api_with_signer(
-        &self,
-        keypair: &QuantumKeyPair,
-    ) -> Result<Api<QuantusRuntimeConfig, JsonrpseeClient>> {
-        let resonance_pair = keypair.to_resonance_pair().map_err(|e| {
-            crate::error::QuantusError::NetworkError(format!("Failed to convert keypair: {:?}", e))
-        })?;
-
-        let extrinsic_signer = ExtrinsicSigner::<QuantusRuntimeConfig>::new(resonance_pair);
-        let mut api_with_signer = self.api.clone();
-        api_with_signer.set_signer(extrinsic_signer);
-
-        Ok(api_with_signer)
-    }
-
-    /// Fetch a raw value from storage by its key
-    pub async fn get_storage_raw(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        let storage_key = substrate_api_client::ac_primitives::StorageKey(key);
-        self.api
-            .get_opaque_storage_by_key(storage_key, None)
-            .await
-            .map_err(|e| QuantusError::NetworkError(format!("Failed to get storage: {:?}", e)))
+        log_verbose!("⚠️  No runtime hash RPC call available");
+        Ok(None)
     }
 }
 
-// Chain client implementation ends here
+// Implement subxt::tx::Signer for ResonancePair
+impl subxt::tx::Signer<ChainConfig> for dilithium_crypto::types::DilithiumPair {
+    fn account_id(&self) -> <ChainConfig as Config>::AccountId {
+        let resonance_public =
+            dilithium_crypto::types::DilithiumPublic::from_slice(&self.public.as_slice())
+                .expect("Invalid public key");
+        let account_id =
+            <dilithium_crypto::types::DilithiumPublic as IdentifyAccount>::into_account(
+                resonance_public,
+            );
+        account_id
+    }
+
+    fn sign(&self, signer_payload: &[u8]) -> <ChainConfig as Config>::Signature {
+        // Use the sign method from the trait implemented for ResonancePair
+        // sp_core::Pair::sign returns ResonanceSignatureWithPublic, which we need to wrap in ResonanceSignatureScheme
+        let signature_with_public =
+            <dilithium_crypto::types::DilithiumPair as sp_core::Pair>::sign(self, signer_payload);
+        dilithium_crypto::types::DilithiumSignatureScheme::Dilithium(signature_with_public)
+    }
+}

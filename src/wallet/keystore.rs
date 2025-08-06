@@ -12,15 +12,15 @@ use sp_core::ByteArray;
 
 // Quantum-safe encryption imports
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, AeadCore, KeyInit, OsRng as AesOsRng},
     Aes256Gcm, Key, Nonce,
 };
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use rand::RngCore;
+use rand::{rng, RngCore};
 
 use std::path::Path;
 
-use dilithium_crypto::types::{ResonancePair, ResonancePublic};
+use dilithium_crypto::types::{DilithiumPair, DilithiumPublic};
 use sp_runtime::traits::IdentifyAccount;
 
 /// Quantum-safe key pair using Dilithium post-quantum signatures
@@ -44,24 +44,25 @@ impl QuantumKeyPair {
     pub fn to_dilithium_keypair(&self) -> Result<Keypair> {
         // TODO: Implement conversion from bytes back to Keypair
         // For now, generate a new one as placeholder
+        // This function should properly reconstruct the Keypair from stored bytes
         Ok(Keypair {
             public: PublicKey::from_bytes(&self.public_key).expect("Failed to parse public key"),
             secret: SecretKey::from_bytes(&self.private_key).expect("Failed to parse private key"),
         })
     }
 
-    /// Convert to ResonancePair for use with substrate-api-client
-    pub fn to_resonance_pair(&self) -> Result<ResonancePair> {
-        // Convert our QuantumKeyPair to ResonancePair using from_seed
+    /// Convert to DilithiumPair for use with substrate-api-client
+    pub fn to_resonance_pair(&self) -> Result<DilithiumPair> {
+        // Convert our QuantumKeyPair to DilithiumPair using from_seed
         // Use the private key as the seed
-        Ok(ResonancePair {
+        Ok(DilithiumPair {
             public: self.public_key.as_slice().try_into().unwrap(),
             secret: self.private_key.as_slice().try_into().unwrap(),
         })
     }
 
     #[allow(dead_code)]
-    pub fn from_resonance_pair(keypair: &ResonancePair) -> Self {
+    pub fn from_resonance_pair(keypair: &DilithiumPair) -> Self {
         Self {
             public_key: keypair.public.as_ref().to_vec(),
             private_key: keypair.secret.as_ref().to_vec(),
@@ -69,15 +70,23 @@ impl QuantumKeyPair {
     }
 
     pub fn to_account_id_32(&self) -> AccountId32 {
-        // Use the ResonancePublic's into_account method for correct address generation
+        // Use the DilithiumPublic's into_account method for correct address generation
         let resonance_public =
-            ResonancePublic::from_slice(&self.public_key).expect("Invalid public key");
+            DilithiumPublic::from_slice(&self.public_key).expect("Invalid public key");
         resonance_public.into_account()
     }
 
     pub fn to_account_id_ss58check(&self) -> String {
         let account = self.to_account_id_32();
         account.to_ss58check()
+    }
+
+    /// Convert to subxt Signer for use
+    pub fn to_subxt_signer(&self) -> Result<dilithium_crypto::types::DilithiumPair> {
+        // Convert to DilithiumPair first - now it implements subxt::tx::Signer<ChainConfig>
+        let resonance_pair = self.to_resonance_pair()?;
+
+        Ok(resonance_pair)
     }
 
     #[allow(dead_code)]
@@ -189,7 +198,7 @@ impl Keystore {
     ) -> Result<EncryptedWallet> {
         // 1. Generate salt for Argon2
         let mut argon2_salt = [0u8; 16];
-        OsRng.fill_bytes(&mut argon2_salt);
+        rng().fill_bytes(&mut argon2_salt);
 
         // 2. Derive encryption key from password using Argon2 (quantum-safe)
         let argon2 = Argon2::default();
@@ -205,7 +214,7 @@ impl Keystore {
         let cipher = Aes256Gcm::new(aes_key);
 
         // 4. Generate nonce and encrypt the wallet data
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = Aes256Gcm::generate_nonce(&mut AesOsRng);
         let serialized_data = serde_json::to_vec(data)?;
         let encrypted_data = cipher
             .encrypt(&nonce, serialized_data.as_ref())
@@ -381,11 +390,11 @@ mod tests {
                 name
             );
 
-            // Verify it matches the direct ResonancePair method
+            // Verify it matches the direct DilithiumPair method
             let expected_address = resonance_pair.public().into_account().to_ss58check();
             assert_eq!(
                 ss58_address, expected_address,
-                "Address should match ResonancePair method for {}",
+                "Address should match DilithiumPair method for {}",
                 name
             );
         }
@@ -445,7 +454,7 @@ mod tests {
         );
         assert_eq!(
             addr2, addr3,
-            "Address should match direct ResonancePair calculation"
+            "Address should match direct DilithiumPair calculation"
         );
     }
 

@@ -6,5 +6,4 @@
 /// - Querying chain state
 /// - Managing RPC connections
 pub mod client;
-pub mod quantus_runtime_config;
-pub mod types;
+pub mod quantus_subxt;

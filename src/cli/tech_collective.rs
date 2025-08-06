@@ -1,13 +1,12 @@
-use crate::chain::client::ChainClient;
-use crate::error::Result;
-use crate::{log_error, log_print, log_success, log_verbose};
+//! `quantus tech-collective` subcommand - tech collective management
+use crate::cli::common::resolve_address;
+use crate::cli::progress_spinner::wait_for_tx_confirmation;
+use crate::{
+    chain::quantus_subxt, error::QuantusError, log_error, log_print, log_success, log_verbose,
+};
 use clap::Subcommand;
 use colored::Colorize;
-use sp_core::crypto::AccountId32;
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::MultiAddress;
-use substrate_api_client::ac_compose_macros::compose_extrinsic;
-use substrate_api_client::{GetStorage, SubmitAndWatch};
+use sp_core::crypto::{AccountId32, Ss58Codec};
 
 /// Tech Collective management commands
 #[derive(Subcommand, Debug)]
@@ -84,7 +83,11 @@ pub enum TechCollectiveCommands {
     },
 
     /// Check who has sudo permissions in the network
-    CheckSudo,
+    CheckSudo {
+        /// Address to check if it's the sudo account (optional)
+        #[arg(short, long)]
+        address: Option<String>,
+    },
 
     /// List active Tech Referenda
     ListReferenda,
@@ -97,25 +100,322 @@ pub enum TechCollectiveCommands {
     },
 }
 
-/// Handle tech collective command
+/// Add a member to the Tech Collective using sudo
+pub async fn add_member(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    who_address: &str,
+) -> crate::error::Result<subxt::utils::H256> {
+    log_verbose!("🏛️  Adding member to Tech Collective...");
+    log_verbose!("   Member: {}", who_address.bright_cyan());
+
+    // Parse the member address
+    let member_account_sp = AccountId32::from_ss58check(who_address)
+        .map_err(|e| QuantusError::Generic(format!("Invalid member address: {:?}", e)))?;
+
+    // Convert to subxt_core AccountId32
+    let member_account_bytes: [u8; 32] = *member_account_sp.as_ref();
+    let member_account_id = subxt::ext::subxt_core::utils::AccountId32::from(member_account_bytes);
+
+    log_verbose!("✍️  Creating add_member transaction...");
+
+    // Create the TechCollective::add_member call as RuntimeCall enum
+    let add_member_call = quantus_subxt::api::Call::TechCollective(
+        quantus_subxt::api::tech_collective::Call::add_member {
+            who: subxt::ext::subxt_core::utils::MultiAddress::Id(member_account_id),
+        },
+    );
+
+    // Wrap in Sudo::sudo call
+    let sudo_call = quantus_subxt::api::tx().sudo().sudo(add_member_call);
+
+    let tx_hash =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, sudo_call, None)
+            .await?;
+
+    log_verbose!("📋 Add member transaction submitted: {:?}", tx_hash);
+
+    Ok(tx_hash)
+}
+
+/// Remove a member from the Tech Collective using sudo
+pub async fn remove_member(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    who_address: &str,
+) -> crate::error::Result<subxt::utils::H256> {
+    log_verbose!("🏛️  Removing member from Tech Collective...");
+    log_verbose!("   Member: {}", who_address.bright_cyan());
+
+    // Parse the member address
+    let member_account_sp = AccountId32::from_ss58check(who_address)
+        .map_err(|e| QuantusError::Generic(format!("Invalid member address: {:?}", e)))?;
+
+    // Convert to subxt_core AccountId32
+    let member_account_bytes: [u8; 32] = *member_account_sp.as_ref();
+    let member_account_id = subxt::ext::subxt_core::utils::AccountId32::from(member_account_bytes);
+
+    log_verbose!("✍️  Creating remove_member transaction...");
+
+    // Create the TechCollective::remove_member call as RuntimeCall enum
+    let remove_member_call = quantus_subxt::api::Call::TechCollective(
+        quantus_subxt::api::tech_collective::Call::remove_member {
+            who: subxt::ext::subxt_core::utils::MultiAddress::Id(member_account_id),
+            min_rank: 0u16, // Use rank 0 as default
+        },
+    );
+
+    // Wrap in Sudo::sudo call
+    let sudo_call = quantus_subxt::api::tx().sudo().sudo(remove_member_call);
+
+    let tx_hash =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, sudo_call, None)
+            .await?;
+
+    log_verbose!("📋 Remove member transaction submitted: {:?}", tx_hash);
+
+    Ok(tx_hash)
+}
+
+/// Vote on a Tech Referenda proposal
+pub async fn vote_on_referendum(
+    quantus_client: &crate::chain::client::QuantusClient,
+    from_keypair: &crate::wallet::QuantumKeyPair,
+    referendum_index: u32,
+    aye: bool,
+) -> crate::error::Result<subxt::utils::H256> {
+    log_verbose!("🗳️  Voting on referendum...");
+    log_verbose!("   Referendum: {}", referendum_index);
+    log_verbose!("   Vote: {}", if aye { "AYE" } else { "NAY" });
+
+    log_verbose!("✍️  Creating vote transaction...");
+
+    // Create the TechCollective::vote call
+    let vote_call = quantus_subxt::api::tx()
+        .tech_collective()
+        .vote(referendum_index, aye);
+
+    let tx_hash =
+        crate::cli::common::submit_transaction(quantus_client, from_keypair, vote_call, None)
+            .await?;
+
+    log_verbose!("📋 Vote transaction submitted: {:?}", tx_hash);
+
+    Ok(tx_hash)
+}
+
+/// Check if an address is a member of the Tech Collective
+pub async fn is_member(
+    quantus_client: &crate::chain::client::QuantusClient,
+    address: &str,
+) -> crate::error::Result<bool> {
+    log_verbose!("🔍 Checking membership...");
+    log_verbose!("   Address: {}", address.bright_cyan());
+
+    // Parse the address
+    let account_sp = AccountId32::from_ss58check(address)
+        .map_err(|e| QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
+
+    // Convert to subxt_core AccountId32
+    let account_bytes: [u8; 32] = *account_sp.as_ref();
+    let account_id = subxt::ext::subxt_core::utils::AccountId32::from(account_bytes);
+
+    // Query Members storage
+    let storage_addr = quantus_subxt::api::storage()
+        .tech_collective()
+        .members(account_id);
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    let member_data = storage_at
+        .fetch(&storage_addr)
+        .await
+        .map_err(|e| QuantusError::NetworkError(format!("Failed to fetch member data: {:?}", e)))?;
+
+    Ok(member_data.is_some())
+}
+
+/// Get member count information
+pub async fn get_member_count(
+    quantus_client: &crate::chain::client::QuantusClient,
+) -> crate::error::Result<Option<u32>> {
+    log_verbose!("🔍 Getting member count...");
+
+    // Query MemberCount storage - use rank 0 as default
+    let storage_addr = quantus_subxt::api::storage()
+        .tech_collective()
+        .member_count(0u16);
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    let count_data = storage_at.fetch(&storage_addr).await.map_err(|e| {
+        QuantusError::NetworkError(format!("Failed to fetch member count: {:?}", e))
+    })?;
+
+    Ok(count_data)
+}
+
+/// Get list of all members
+pub async fn get_member_list(
+    quantus_client: &crate::chain::client::QuantusClient,
+) -> crate::error::Result<Vec<AccountId32>> {
+    log_verbose!("🔍 Getting member list...");
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    // Query all Members storage entries
+    let members_storage = quantus_subxt::api::storage()
+        .tech_collective()
+        .members_iter();
+
+    let mut members = Vec::new();
+    let mut iter = storage_at.iter(members_storage).await.map_err(|e| {
+        QuantusError::NetworkError(format!("Failed to create members iterator: {:?}", e))
+    })?;
+
+    while let Some(result) = iter.next().await {
+        match result {
+            Ok(storage_entry) => {
+                let key = storage_entry.key_bytes;
+                // The key contains the AccountId32 after the storage prefix
+                // TechCollective Members storage key format: prefix + AccountId32
+                if key.len() >= 32 {
+                    // Extract the last 32 bytes as AccountId32
+                    let account_bytes: [u8; 32] =
+                        key[key.len() - 32..].try_into().unwrap_or([0u8; 32]);
+                    let sp_account = AccountId32::from(account_bytes);
+                    log_verbose!("Found member: {}", sp_account.to_ss58check());
+                    members.push(sp_account);
+                }
+            }
+            Err(e) => {
+                log_verbose!("⚠️  Error reading member entry: {:?}", e);
+            }
+        }
+    }
+
+    log_verbose!("Found {} total members", members.len());
+    Ok(members)
+}
+
+/// Get sudo account information
+pub async fn get_sudo_account(
+    quantus_client: &crate::chain::client::QuantusClient,
+) -> crate::error::Result<Option<AccountId32>> {
+    log_verbose!("🔍 Getting sudo account...");
+
+    // Query Sudo::Key storage
+    let storage_addr = quantus_subxt::api::storage().sudo().key();
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    let sudo_account = storage_at.fetch(&storage_addr).await.map_err(|e| {
+        QuantusError::NetworkError(format!("Failed to fetch sudo account: {:?}", e))
+    })?;
+
+    // Convert from subxt_core AccountId32 to sp_core AccountId32
+    if let Some(subxt_account) = sudo_account {
+        let account_bytes: [u8; 32] = *subxt_account.as_ref();
+        let sp_account = AccountId32::from(account_bytes);
+        Ok(Some(sp_account))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Handle tech collective subxt commands
 pub async fn handle_tech_collective_command(
     command: TechCollectiveCommands,
     node_url: &str,
-) -> Result<()> {
+) -> crate::error::Result<()> {
+    log_print!("🏛️  Tech Collective");
+
+    let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
+
     match command {
         TechCollectiveCommands::AddMember {
             who,
             from,
             password,
             password_file,
-        } => add_member(&who, &from, password, password_file, node_url).await,
+        } => {
+            log_print!("🏛️  Adding member to Tech Collective");
+            log_print!("   👤 Member: {}", who.bright_cyan());
+            log_print!("   🔑 Signed by: {}", from.bright_yellow());
+
+            // Load wallet
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit transaction
+            let tx_hash = add_member(&quantus_client, &keypair, &who).await?;
+
+            log_print!(
+                "✅ {} Add member transaction submitted! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_success!(
+                    "🎉 {} Member added to Tech Collective!",
+                    "FINISHED".bright_green().bold()
+                );
+            } else {
+                log_error!("Transaction failed!");
+            }
+
+            Ok(())
+        }
 
         TechCollectiveCommands::RemoveMember {
             who,
             from,
             password,
             password_file,
-        } => remove_member(&who, &from, password, password_file, node_url).await,
+        } => {
+            log_print!("🏛️  Removing member from Tech Collective ");
+            log_print!("   👤 Member: {}", who.bright_cyan());
+            log_print!("   🔑 Signed by: {}", from.bright_yellow());
+
+            // Load wallet
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit transaction
+            let tx_hash = remove_member(&quantus_client, &keypair, &who).await?;
+
+            log_print!(
+                "✅ {} Remove member transaction submitted! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_success!(
+                    "🎉 {} Member removed from Tech Collective!",
+                    "FINISHED".bright_green().bold()
+                );
+            } else {
+                log_error!("Transaction failed!");
+            }
+
+            Ok(())
+        }
 
         TechCollectiveCommands::Vote {
             referendum_index,
@@ -124,408 +424,173 @@ pub async fn handle_tech_collective_command(
             password,
             password_file,
         } => {
-            vote_on_referendum(
-                referendum_index,
-                aye,
-                &from,
-                password,
-                password_file,
-                node_url,
-            )
-            .await
-        }
-
-        TechCollectiveCommands::ListMembers => list_members(node_url).await,
-
-        TechCollectiveCommands::IsMember { address } => is_member(&address, node_url).await,
-
-        TechCollectiveCommands::CheckSudo => check_sudo(node_url).await,
-
-        TechCollectiveCommands::ListReferenda => list_referenda(node_url).await,
-
-        TechCollectiveCommands::GetReferendum { index } => {
-            get_referendum_details(index, node_url).await
-        }
-    }
-}
-
-/// Add a member to the Tech Collective
-async fn add_member(
-    who: &str,
-    from: &str,
-    password: Option<String>,
-    password_file: Option<String>,
-    node_url: &str,
-) -> Result<()> {
-    log_print!("🏛️  Adding member to Tech Collective");
-    log_print!("   👤 Member: {}", who.bright_cyan());
-    log_print!("   🔑 Signed by: {}", from.bright_yellow());
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let keypair = crate::wallet::load_keypair_from_wallet(from, password, password_file)?;
-
-    // Parse the member address
-    let member_account = AccountId32::from_ss58check(who).map_err(|e| {
-        crate::error::QuantusError::Generic(format!("Invalid member address: {:?}", e))
-    })?;
-    let member: MultiAddress<AccountId32, u32> = MultiAddress::Id(member_account);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic with sudo wrapper for proper permissions
-    // First create the inner call (TechCollective::add_member)
-    let inner_call = compose_extrinsic!(&api_with_signer, "TechCollective", "add_member", member)
-        .ok_or_else(|| {
-        crate::error::QuantusError::Generic("Failed to create inner add_member call".to_string())
-    })?;
-
-    // Now wrap it with Sudo::sudo
-    let extrinsic = compose_extrinsic!(&api_with_signer, "Sudo", "sudo", inner_call.function)
-        .ok_or_else(|| {
-            crate::error::QuantusError::Generic(
-                "Failed to create sudo wrapper extrinsic".to_string(),
-            )
-        })?;
-
-    // Submit transaction
-    log_print!("📡 Submitting add_member transaction...");
-
-    match crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic) {
-        Ok(tx_report) => {
-            log_success!("✅ Member added to Tech Collective successfully!");
+            log_print!("🗳️  Voting on Tech Referendum #{} ", referendum_index);
             log_print!(
-                "📋 Transaction hash: {}",
-                tx_report.extrinsic_hash.to_string().bright_yellow()
+                "   📊 Vote: {}",
+                if aye {
+                    "AYE ✅".bright_green()
+                } else {
+                    "NAY ❌".bright_red()
+                }
             );
+            log_print!("   🔑 Signed by: {}", from.bright_yellow());
+
+            // Load wallet
+            let keypair = crate::wallet::load_keypair_from_wallet(&from, password, password_file)?;
+
+            // Submit transaction
+            let tx_hash =
+                vote_on_referendum(&quantus_client, &keypair, referendum_index, aye).await?;
+
+            log_print!(
+                "✅ {} Vote transaction submitted! Hash: {:?}",
+                "SUCCESS".bright_green().bold(),
+                tx_hash
+            );
+
+            let success = wait_for_tx_confirmation(quantus_client.client(), tx_hash).await?;
+
+            if success {
+                log_success!("🎉 {} Vote submitted!", "FINISHED".bright_green().bold());
+            } else {
+                log_error!("Transaction failed!");
+            }
+
             Ok(())
         }
-        Err(e) => {
-            // Check if this is a BadOrigin error
-            let error_msg = format!("{:?}", e);
-            if error_msg.contains("BadOrigin") {
-                log_error!("❌ BadOrigin error: Insufficient permissions to add member");
-                log_print!("💡 TechCollective::add_member requires sudo permissions.");
-                log_print!(
-                    "💡 To add a member as sudo user, you need to create a proper sudo call."
-                );
-                log_print!("💡 Example workaround:");
-                log_print!("   1. First, ensure you are sudo user (crystal_alice should be sudo in dev mode)");
-                log_print!(
-                    "   2. The call structure would be: Sudo::sudo(TechCollective::add_member)"
-                );
-                log_print!("   3. This requires manually encoding the inner call - complex implementation needed");
-                log_print!("💡 Alternative: Check if the runtime has initial tech collective members set up");
-                return Err(crate::error::QuantusError::Generic(
-                    "add_member requires sudo permissions. The wallet used must have sudo access."
-                        .to_string(),
-                )
-                .into());
+
+        TechCollectiveCommands::ListMembers => {
+            log_print!("🏛️  Tech Collective Members ");
+            log_print!("");
+
+            // Get actual member list
+            match get_member_list(&quantus_client).await {
+                Ok(members) => {
+                    if members.is_empty() {
+                        log_print!("📭 No members in Tech Collective");
+                    } else {
+                        log_print!("👥 Total members: {}", members.len());
+                        log_print!("");
+
+                        for (index, member) in members.iter().enumerate() {
+                            log_print!(
+                                "{}. {}",
+                                (index + 1).to_string().bright_blue(),
+                                member.to_ss58check().bright_green()
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    log_verbose!("⚠️  Failed to get member list: {:?}", e);
+                    // Fallback to member count
+                    match get_member_count(&quantus_client).await? {
+                        Some(count_data) => {
+                            log_verbose!("✅ Got member count data: {:?}", count_data);
+                            if count_data > 0 {
+                                log_print!(
+                                    "👥 Total members: {} (detailed list unavailable)",
+                                    count_data
+                                );
+                            } else {
+                                log_print!("📭 No members in Tech Collective");
+                            }
+                        }
+                        None => {
+                            log_print!("📭 No member data found - Tech Collective may be empty");
+                        }
+                    }
+                }
             }
-            Err(e)
-        }
-    }
-}
 
-/// Remove a member from the Tech Collective
-async fn remove_member(
-    who: &str,
-    from: &str,
-    password: Option<String>,
-    password_file: Option<String>,
-    node_url: &str,
-) -> Result<()> {
-    log_print!("🏛️  Removing member from Tech Collective");
-    log_print!("   👤 Member: {}", who.bright_cyan());
-    log_print!("   🔑 Signed by: {}", from.bright_yellow());
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let keypair = crate::wallet::load_keypair_from_wallet(from, password, password_file)?;
-
-    // Parse the member address
-    let member_account = AccountId32::from_ss58check(who).map_err(|e| {
-        crate::error::QuantusError::Generic(format!("Invalid member address: {:?}", e))
-    })?;
-    let member: MultiAddress<AccountId32, u32> = MultiAddress::Id(member_account);
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic with sudo wrapper - if rank is provided, use it; otherwise let the runtime determine
-    let inner_call = compose_extrinsic!(
-        &api_with_signer,
-        "TechCollective",
-        "remove_member",
-        member,
-        0u16
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic("Failed to create inner remove_member call".to_string())
-    })?;
-
-    // Now wrap it with Sudo::sudo
-    let extrinsic = compose_extrinsic!(&api_with_signer, "Sudo", "sudo", inner_call.function)
-        .ok_or_else(|| {
-            crate::error::QuantusError::Generic(
-                "Failed to create sudo wrapper extrinsic".to_string(),
-            )
-        })?;
-
-    // Submit transaction
-    log_print!("📡 Submitting remove_member transaction...");
-    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("✅ Member removed from Tech Collective successfully!");
-    log_print!(
-        "📋 Transaction hash: {}",
-        tx_report.extrinsic_hash.to_string().bright_yellow()
-    );
-
-    Ok(())
-}
-
-/// Vote on a Tech Referenda proposal
-async fn vote_on_referendum(
-    referendum_index: u32,
-    aye: bool,
-    from: &str,
-    password: Option<String>,
-    password_file: Option<String>,
-    node_url: &str,
-) -> Result<()> {
-    log_print!("🗳️  Voting on Tech Referendum #{}", referendum_index);
-    log_print!(
-        "   📊 Vote: {}",
-        if aye {
-            "AYE ✅".bright_green()
-        } else {
-            "NAY ❌".bright_red()
-        }
-    );
-    log_print!("   🔑 Signed by: {}", from.bright_yellow());
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let keypair = crate::wallet::load_keypair_from_wallet(from, password, password_file)?;
-
-    // Create API with signer
-    let api_with_signer = chain_client.create_api_with_signer(&keypair)?;
-
-    // Create extrinsic
-    let extrinsic = compose_extrinsic!(
-        &api_with_signer,
-        "TechCollective",
-        "vote",
-        referendum_index,
-        aye
-    )
-    .ok_or_else(|| {
-        crate::error::QuantusError::Generic("Failed to create vote extrinsic".to_string())
-    })?;
-
-    // Submit transaction
-    log_print!("📡 Submitting vote transaction...");
-    let tx_report = crate::submit_extrinsic_with_spinner!(chain_client, keypair, extrinsic)?;
-
-    log_success!("✅ Vote submitted successfully!");
-    log_print!(
-        "📋 Transaction hash: {}",
-        tx_report.extrinsic_hash.to_string().bright_yellow()
-    );
-
-    Ok(())
-}
-
-/// List all Tech Collective members
-async fn list_members(node_url: &str) -> Result<()> {
-    log_print!("🏛️  Tech Collective Members");
-    log_print!("");
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let api = chain_client.get_api();
-
-    // Query Members storage
-    log_verbose!("🔍 Querying TechCollective Members storage...");
-
-    // Get member count per rank - this is a Vec<u32> representing count per rank
-    let member_count_result = api
-        .get_storage::<Vec<u32>>("TechCollective", "MemberCount", None)
-        .await;
-    match member_count_result {
-        Ok(Some(count_data)) => {
-            log_verbose!("✅ Got member count data: {:?}", count_data);
-            let total_members: u32 = count_data.iter().sum();
-            if total_members > 0 {
-                log_print!("👥 Total members: {}", total_members);
-            } else {
-                log_print!("📭 No members in Tech Collective");
-            }
-        }
-        Ok(None) => {
-            log_print!("📭 No member count data found - Tech Collective may be empty");
-        }
-        Err(e) => {
-            log_verbose!("⚠️  Failed to query member count: {:?}", e);
-        }
-    }
-
-    // List some storage keys to see if there are any members
-    let storage_prefix = match api
-        .get_storage_map_key_prefix("TechCollective", "Members")
-        .await
-    {
-        Ok(prefix) => prefix,
-        Err(e) => {
-            log_verbose!("⚠️  Failed to get storage prefix: {:?}", e);
-            return Ok(());
-        }
-    };
-    let keys_result = api
-        .get_storage_keys_paged(Some(storage_prefix.clone()), 10, None, None)
-        .await;
-
-    match keys_result {
-        Ok(keys) => {
-            if keys.is_empty() {
-                log_print!("📭 No member keys found in storage");
-            } else {
-                log_print!("🔑 Found {} member storage keys", keys.len());
-                log_verbose!("Storage keys: {:?}", keys);
-            }
-        }
-        Err(e) => {
-            log_verbose!("⚠️  Failed to query storage keys: {:?}", e);
-        }
-    }
-
-    // For now, show placeholder with helpful information
-    log_print!("");
-    log_print!("💡 To check specific membership:");
-    log_print!("   quantus tech-collective is-member --address <ADDRESS>");
-    log_print!("💡 To add a member (requires sudo):");
-    log_print!("   quantus tech-collective add-member --who <ADDRESS> --from <SUDO_WALLET>");
-
-    Ok(())
-}
-
-/// Check if an address is a member
-async fn is_member(address: &str, node_url: &str) -> Result<()> {
-    log_print!("🔍 Checking Tech Collective membership");
-    log_print!("   👤 Address: {}", address.bright_cyan());
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let api = chain_client.get_api();
-
-    // Parse the address
-    let account = AccountId32::from_ss58check(address)
-        .map_err(|e| crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
-
-    log_verbose!("🔍 Querying membership for: {:?}", account);
-
-    // Query Members storage for this specific account
-    // Members storage map: AccountId32 -> Option<MemberRecord>
-    // We'll use a generic Vec<u8> for the member record since we don't know the exact type
-    let member_result = api
-        .get_storage_map::<AccountId32, Vec<u8>>("TechCollective", "Members", account, None)
-        .await;
-
-    match member_result {
-        Ok(Some(member_data)) => {
-            log_success!("✅ Address IS a member of Tech Collective!");
-            log_print!("👥 Member data found in storage");
-            log_verbose!("📊 Raw member data: {:?}", member_data);
-            log_print!("💡 Raw data length: {} bytes", member_data.len());
-        }
-        Ok(None) => {
-            log_print!("❌ Address is NOT a member of Tech Collective");
-            log_print!("💡 No membership record found for this address");
-        }
-        Err(e) => {
-            log_error!("❌ Failed to query membership: {:?}", e);
-            log_print!("💡 Check if the node is accessible and the address is valid");
-            return Err(crate::error::QuantusError::Generic(format!(
-                "Storage query failed: {:?}",
-                e
-            ))
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-/// Check who has sudo permissions in the network
-async fn check_sudo(node_url: &str) -> Result<()> {
-    log_print!("🏛️  Checking who has sudo permissions in the network");
-
-    let chain_client = ChainClient::new(node_url).await?;
-    let api = chain_client.get_api();
-
-    // Query sudo permissions
-    log_verbose!("🔍 Querying sudo permissions...");
-
-    let sudo_result = api.get_storage::<AccountId32>("Sudo", "Key", None).await;
-
-    match sudo_result {
-        Ok(Some(sudo_account)) => {
-            log_success!(
-                "✅ Found sudo account: {}",
-                sudo_account.to_ss58check().bright_green()
+            log_print!("");
+            log_print!("💡 To check specific membership:");
+            log_print!("   quantus tech-collective is-member --address <ADDRESS>");
+            log_print!("💡 To add a member (requires sudo):");
+            log_print!(
+                "   quantus tech-collective add-member --who <ADDRESS> --from <SUDO_WALLET>"
             );
-            log_print!("🔑 This account has root/sudo permissions");
 
-            // Check if crystal_alice is the sudo account
-            let crystal_alice_addr = "5H7DdvKue19FQZpRKc2hmBfSBGEczwvdnVYDNZC3W95UDyGP";
-            if sudo_account.to_ss58check() == crystal_alice_addr {
-                log_success!("✅ crystal_alice IS the sudo account!");
+            Ok(())
+        }
+
+        TechCollectiveCommands::IsMember { address } => {
+            log_print!("🔍 Checking Tech Collective membership ");
+
+            // Resolve address (could be wallet name or SS58 address)
+            let resolved_address = resolve_address(&address)?;
+
+            log_print!("   👤 Address: {}", resolved_address.bright_cyan());
+
+            if is_member(&quantus_client, &resolved_address).await? {
+                log_success!("✅ Address IS a member of Tech Collective!");
+                log_print!("👥 Member data found in storage");
             } else {
-                log_print!("❌ crystal_alice is NOT the sudo account");
-                log_print!(
-                    "💡 crystal_alice address: {}",
-                    crystal_alice_addr.bright_cyan()
-                );
-                log_print!(
-                    "💡 Actual sudo address: {}",
-                    sudo_account.to_ss58check().bright_yellow()
-                );
+                log_print!("❌ Address is NOT a member of Tech Collective");
+                log_print!("💡 No membership record found for this address");
             }
+
+            Ok(())
         }
-        Ok(None) => {
-            log_print!("📭 No sudo account found in network");
-            log_print!("💡 The network may not have sudo configured");
+
+        TechCollectiveCommands::CheckSudo { address } => {
+            log_print!("🏛️  Checking sudo permissions ");
+
+            match get_sudo_account(&quantus_client).await? {
+                Some(sudo_account) => {
+                    let sudo_address = sudo_account.to_ss58check();
+                    log_verbose!("🔍 Found sudo account: {}", sudo_address);
+                    log_success!("✅ Found sudo account: {}", sudo_address.bright_green());
+
+                    // If an address was provided, check if it matches the sudo account
+                    if let Some(check_address) = address {
+                        log_verbose!("🔍 Checking if provided address is sudo...");
+
+                        // Resolve address (could be wallet name or SS58 address)
+                        let resolved_address = resolve_address(&check_address)?;
+                        log_verbose!("   👤 Address to check: {}", resolved_address);
+
+                        if sudo_address == resolved_address {
+                            log_success!("✅ Provided address IS the sudo account!");
+                        } else {
+                            log_print!("❌ Provided address is NOT the sudo account");
+                            log_verbose!("💡 Provided address: {}", resolved_address);
+                            log_verbose!("💡 Actual sudo address: {}", sudo_address);
+                        }
+                    } else {
+                        // No address provided, just show the sudo account
+                        log_verbose!("💡 Use 'quantus tech-collective check-sudo --address <ADDRESS>' to check if a specific address is sudo");
+                    }
+                }
+                None => {
+                    log_print!("📭 No sudo account found in network");
+                    log_verbose!("💡 The network may not have sudo configured");
+                }
+            }
+
+            Ok(())
         }
-        Err(e) => {
-            log_error!("❌ Failed to query sudo account: {:?}", e);
-            log_print!("💡 Check if the node is accessible and the network has sudo configured");
+
+        TechCollectiveCommands::ListReferenda => {
+            log_print!("📜 Active Tech Referenda ");
+            log_print!("");
+
+            log_print!("💡 Referenda listing requires TechReferenda pallet storage queries");
+            log_print!(
+                "💡 Use 'quantus call --pallet TechReferenda --call <method>' for direct interaction"
+            );
+
+            Ok(())
+        }
+
+        TechCollectiveCommands::GetReferendum { index } => {
+            log_print!("📄 Tech Referendum #{} Details ", index);
+            log_print!("");
+
+            log_print!("💡 Referendum details require TechReferenda storage access");
+            log_print!("💡 Query ReferendumInfoFor storage with index {}", index);
+
+            Ok(())
         }
     }
-
-    Ok(())
-}
-
-/// List active Tech Referenda
-async fn list_referenda(node_url: &str) -> Result<()> {
-    log_print!("📜 Active Tech Referenda");
-    log_print!("");
-
-    let _chain_client = ChainClient::new(node_url).await?;
-
-    log_print!("💡 Referenda listing requires TechReferenda pallet storage queries");
-    log_print!(
-        "💡 Use 'quantus call --pallet TechReferenda --call <method>' for direct interaction"
-    );
-
-    Ok(())
-}
-
-/// Get referendum details
-async fn get_referendum_details(index: u32, node_url: &str) -> Result<()> {
-    log_print!("📄 Tech Referendum #{} Details", index);
-    log_print!("");
-
-    let _chain_client = ChainClient::new(node_url).await?;
-
-    log_print!("💡 Referendum details require TechReferenda storage access");
-    log_print!("💡 Query ReferendumInfoFor storage with index {}", index);
-
-    Ok(())
 }

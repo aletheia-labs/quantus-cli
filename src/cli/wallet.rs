@@ -1,5 +1,8 @@
+//! `quantus wallet` subcommand - wallet operations
 use crate::{
-    log_error, log_print, log_success,
+    chain::quantus_subxt,
+    error::QuantusError,
+    log_error, log_print, log_success, log_verbose,
     wallet::{password::get_mnemonic_from_user, WalletManager},
 };
 use clap::Subcommand;
@@ -7,7 +10,7 @@ use colored::Colorize;
 use sp_core::crypto::{AccountId32, Ss58Codec};
 use std::io::{self, Write};
 
-/// Wallet subcommands
+/// Wallet management commands
 #[derive(Subcommand, Debug)]
 pub enum WalletCommands {
     /// Create a new wallet with quantum-safe keys
@@ -90,6 +93,50 @@ pub enum WalletCommands {
         #[arg(short, long)]
         password: Option<String>,
     },
+}
+
+/// Get the nonce (transaction count) of an account
+pub async fn get_account_nonce(
+    quantus_client: &crate::chain::client::QuantusClient,
+    account_address: &str,
+) -> crate::error::Result<u32> {
+    log_verbose!(
+        "#️⃣ Querying nonce for account: {}",
+        account_address.bright_green()
+    );
+
+    // Parse the SS58 address to AccountId32 (sp-core)
+    let account_id_sp = AccountId32::from_ss58check(account_address)
+        .map_err(|e| QuantusError::NetworkError(format!("Invalid SS58 address: {:?}", e)))?;
+
+    log_verbose!("🔍 SP Account ID: {:?}", account_id_sp);
+
+    // Convert to subxt_core AccountId32 for storage query
+    let account_bytes: [u8; 32] = *account_id_sp.as_ref();
+    let account_id = subxt::ext::subxt_core::utils::AccountId32::from(account_bytes);
+
+    log_verbose!("🔍 SubXT Account ID: {:?}", account_id);
+
+    // Use SubXT to query System::Account storage directly (like send_subxt.rs)
+    use quantus_subxt::api;
+    let storage_addr = api::storage().system().account(account_id);
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    let account_info = storage_at
+        .fetch_or_default(&storage_addr)
+        .await
+        .map_err(|e| {
+            QuantusError::NetworkError(format!("Failed to fetch account info: {:?}", e))
+        })?;
+
+    log_verbose!("✅ Account info retrieved with storage query!");
+    log_verbose!("🔢 Nonce: {}", account_info.nonce);
+
+    Ok(account_info.nonce)
 }
 
 /// Handle wallet commands
@@ -449,15 +496,14 @@ pub async fn handle_wallet_command(
         } => {
             log_print!("🔢 Querying account nonce...");
 
-            let chain_client = crate::chain::client::ChainClient::new(node_url).await?;
+            let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
 
             // Determine which address to query
             let target_address = match (address, wallet) {
                 (Some(addr), _) => {
-                    // Validate the provided address, though get_account_nonce will also do it
-                    AccountId32::from_ss58check(&addr).map_err(|e| {
-                        crate::error::QuantusError::Generic(format!("Invalid address: {:?}", e))
-                    })?;
+                    // Validate the provided address
+                    AccountId32::from_ss58check(&addr)
+                        .map_err(|e| QuantusError::Generic(format!("Invalid address: {:?}", e)))?;
                     addr
                 }
                 (None, Some(wallet_name)) => {
@@ -474,12 +520,12 @@ pub async fn handle_wallet_command(
 
             log_print!("Account: {}", target_address.bright_cyan());
 
-            match chain_client.get_account_nonce(&target_address).await {
+            match get_account_nonce(&quantus_client, &target_address).await {
                 Ok(nonce) => {
                     log_success!("Nonce: {}", nonce.to_string().bright_green());
                 }
                 Err(e) => {
-                    log_error!("❌ Failed to get nonce: {}", e);
+                    log_print!("❌ Failed to get nonce: {}", e);
                     return Err(e);
                 }
             }

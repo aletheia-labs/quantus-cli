@@ -1,8 +1,5 @@
-use crate::chain::client::ChainClient;
-use crate::error::Result;
-use crate::{log_error, log_print, log_success};
+use crate::{chain::quantus_subxt, error::Result, log_print, log_success};
 use clap::Subcommand;
-use substrate_api_client::GetStorage;
 
 /// Scheduler-related commands
 #[derive(Subcommand, Debug)]
@@ -11,38 +8,51 @@ pub enum SchedulerCommands {
     GetLastProcessedTimestamp,
 }
 
+/// Get the last processed timestamp from the scheduler
+pub async fn get_last_processed_timestamp(
+    quantus_client: &crate::chain::client::QuantusClient,
+) -> Result<Option<u64>> {
+    use quantus_subxt::api;
+
+    log_print!("🕒 Getting last processed timestamp from the scheduler");
+
+    // Build the storage key for Scheduler::LastProcessedTimestamp
+    let storage_addr = api::storage().scheduler().last_processed_timestamp();
+
+    // Get the latest block hash to read from the latest state (not finalized)
+    let latest_block_hash = quantus_client.get_latest_block().await?;
+
+    let storage_at = quantus_client.client().storage().at(latest_block_hash);
+
+    let timestamp = storage_at.fetch(&storage_addr).await.map_err(|e| {
+        crate::error::QuantusError::NetworkError(format!(
+            "Failed to fetch last processed timestamp: {:?}",
+            e
+        ))
+    })?;
+
+    Ok(timestamp)
+}
+
 /// Handle scheduler commands
 pub async fn handle_scheduler_command(command: SchedulerCommands, node_url: &str) -> Result<()> {
     log_print!("🗓️  Scheduler");
 
-    let chain_client = ChainClient::new(node_url).await?;
+    let quantus_client = crate::chain::client::QuantusClient::new(node_url).await?;
 
     match command {
         SchedulerCommands::GetLastProcessedTimestamp => {
-            get_last_processed_timestamp(&chain_client).await
+            match get_last_processed_timestamp(&quantus_client).await? {
+                Some(timestamp) => {
+                    log_success!("🎉 Last processed timestamp: {}", timestamp);
+                }
+                None => {
+                    log_print!(
+                        "🤷 No last processed timestamp found. The scheduler may not have run yet."
+                    );
+                }
+            }
+            Ok(())
         }
     }
-}
-
-/// Get the last processed timestamp from the scheduler
-async fn get_last_processed_timestamp(chain_client: &ChainClient) -> Result<()> {
-    log_print!("🕒 Getting last processed timestamp from the scheduler");
-
-    match chain_client
-        .get_api()
-        .get_storage::<u64>("Scheduler", "LastProcessedTimestamp", None)
-        .await
-    {
-        Ok(Some(timestamp)) => {
-            log_success!("🎉 Last processed timestamp: {}", timestamp);
-        }
-        Ok(None) => {
-            log_print!("🤷 No last processed timestamp found. The scheduler may not have run yet.");
-        }
-        Err(e) => {
-            log_error!("❌ Error getting last processed timestamp: {:?}", e);
-        }
-    }
-
-    Ok(())
 }
