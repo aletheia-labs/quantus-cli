@@ -2,6 +2,7 @@ use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
 
+pub mod block;
 pub mod common;
 pub mod events;
 pub mod generic_call;
@@ -183,6 +184,37 @@ pub enum Commands {
 
 	/// Check compatibility with the connected node
 	CompatibilityCheck,
+
+	/// Detailed block information and analysis
+	Block {
+		/// Block number to analyze
+		#[arg(long)]
+		number: Option<u32>,
+
+		/// Block hash to analyze (alternative to number)
+		#[arg(long)]
+		hash: Option<String>,
+
+		/// Use latest block if no number/hash specified
+		#[arg(long)]
+		latest: bool,
+
+		/// Show storage statistics for this block
+		#[arg(long)]
+		storage: bool,
+
+		/// Show detailed extrinsic information
+		#[arg(long)]
+		extrinsics: bool,
+
+		/// Show events from this block
+		#[arg(long)]
+		events: bool,
+
+		/// Show all available information
+		#[arg(long)]
+		all: bool,
+	},
 }
 
 /// Developer subcommands
@@ -274,6 +306,11 @@ pub async fn execute_command(
 			Ok(())
 		},
 		Commands::CompatibilityCheck => handle_compatibility_check(node_url).await,
+		Commands::Block { number, hash, latest, storage, extrinsics, events, all } =>
+			block::handle_block_command(
+				number, hash, latest, storage, extrinsics, events, all, node_url,
+			)
+			.await,
 	}
 }
 
