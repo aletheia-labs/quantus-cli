@@ -106,6 +106,22 @@ fn show_block_header(block_data: &serde_json::Value) -> crate::error::Result<()>
 					extrinsics_root.as_str().unwrap_or("unknown").bright_yellow()
 				);
 			}
+
+			// Try to get timestamp from header if available
+			if let Some(timestamp) = header.get("timestamp") {
+				if let Some(timestamp_num) = timestamp.as_u64() {
+					// Convert milliseconds to human readable time
+					let timestamp_secs = timestamp_num / 1000;
+					let datetime = chrono::DateTime::from_timestamp(timestamp_secs as i64, 0);
+					if let Some(dt) = datetime {
+						log_print!(
+							"   • Timestamp: {} ({})",
+							dt.format("%Y-%m-%d %H:%M:%S UTC").to_string().bright_cyan(),
+							timestamp_num.to_string().bright_yellow()
+						);
+					}
+				}
+			}
 		}
 
 		if let Some(extrinsics) = block.get("extrinsics") {
@@ -156,6 +172,29 @@ async fn show_storage_statistics(
 		.unwrap_or_default();
 	log_print!("   • Events: {}", event_count.to_string().bright_yellow());
 
+	// Try to get timestamp from Timestamp::Now storage
+	let timestamp_addr = crate::chain::quantus_subxt::api::storage().timestamp().now();
+	match storage_at.fetch(&timestamp_addr).await {
+		Ok(Some(timestamp)) => {
+			// Convert milliseconds to human readable time
+			let timestamp_secs = timestamp / 1000;
+			let datetime = chrono::DateTime::from_timestamp(timestamp_secs as i64, 0);
+			if let Some(dt) = datetime {
+				log_print!(
+					"   • Block Time: {} ({})",
+					dt.format("%Y-%m-%d %H:%M:%S UTC").to_string().bright_green(),
+					timestamp.to_string().bright_yellow()
+				);
+			}
+		},
+		Ok(None) => {
+			log_print!("   • Block Time: {}", "no timestamp".bright_yellow());
+		},
+		Err(_) => {
+			log_print!("   • Block Time: {}", "unknown".bright_yellow());
+		},
+	}
+
 	log_print!("");
 	Ok(())
 }
@@ -197,24 +236,53 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 					extrinsics_array.len().to_string().bright_green()
 				);
 
-				// Calculate total size of all extrinsics
-				let mut total_size = 0;
+				// Calculate total size of all extrinsics in actual bytes
+				let mut total_size_bytes = 0;
+				let mut total_size_chars = 0;
 				for extrinsic in extrinsics_array.iter() {
 					if let Some(ext_str) = extrinsic.as_str() {
-						total_size += ext_str.len();
+						total_size_chars += ext_str.len();
+						// Convert hex string to actual bytes
+						if ext_str.starts_with("0x") {
+							// Remove "0x" prefix and convert hex to bytes
+							let hex_part = &ext_str[2..];
+							if hex_part.len() % 2 == 0 {
+								total_size_bytes += hex_part.len() / 2;
+							} else {
+								total_size_bytes += (hex_part.len() + 1) / 2;
+							}
+						} else {
+							// If not hex, assume it's already in bytes
+							total_size_bytes += ext_str.len();
+						}
 					}
 				}
-				log_print!("   • Total Size: {} bytes", total_size.to_string().bright_magenta());
+				log_print!(
+					"   • Total Size: {} bytes ({} chars)",
+					total_size_bytes.to_string().bright_magenta(),
+					total_size_chars.to_string().bright_cyan()
+				);
 
 				// Show first 3 extrinsics with details
 				for (index, extrinsic) in extrinsics_array.iter().take(3).enumerate() {
 					let ext_str = extrinsic.as_str().unwrap_or("unknown");
-					let ext_size = ext_str.len();
+					let ext_size_chars = ext_str.len();
+					let ext_size_bytes = if ext_str.starts_with("0x") {
+						let hex_part = &ext_str[2..];
+						if hex_part.len() % 2 == 0 {
+							hex_part.len() / 2
+						} else {
+							(hex_part.len() + 1) / 2
+						}
+					} else {
+						ext_str.len()
+					};
 					log_print!(
-						"   {}. Size: {} bytes, Data: {}...",
+						"   {}. Size: {} bytes ({} chars), Data: {}...",
 						(index + 1).to_string().bright_yellow(),
-						ext_size.to_string().bright_blue(),
-						if ext_str.len() > 20 { &ext_str[..20] } else { ext_str }.bright_cyan()
+						ext_size_bytes.to_string().bright_blue(),
+						ext_size_chars.to_string().bright_cyan(),
+						if ext_str.len() > 20 { &ext_str[..20] } else { ext_str }.bright_magenta()
 					);
 				}
 
