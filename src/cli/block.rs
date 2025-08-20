@@ -164,8 +164,8 @@ async fn handle_block_analyze_command(
 		show_extrinsic_details(&block_data)?;
 	}
 
-	// Show detailed information for ALL extrinsics if requested
-	if extrinsics_details || all {
+	// Show detailed information for ALL extrinsics if requested (only when explicitly requested)
+	if extrinsics_details {
 		show_all_extrinsic_details(&block_data)?;
 	}
 
