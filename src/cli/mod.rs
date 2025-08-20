@@ -215,6 +215,19 @@ pub enum Commands {
 		#[arg(long)]
 		all: bool,
 	},
+
+	/// List blocks in range with summary info
+	BlockList {
+		/// Start block number
+		#[arg(long)]
+		start: u32,
+		/// End block number
+		#[arg(long)]
+		end: u32,
+		/// Block step (default: 1)
+		#[arg(long)]
+		step: Option<u32>,
+	},
 }
 
 /// Developer subcommands
@@ -311,6 +324,8 @@ pub async fn execute_command(
 				number, hash, latest, storage, extrinsics, events, all, node_url,
 			)
 			.await,
+		Commands::BlockList { start, end, step } =>
+			block::handle_block_list_command(start, end, step, node_url).await,
 	}
 }
 

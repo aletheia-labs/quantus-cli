@@ -298,3 +298,170 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 	log_print!("");
 	Ok(())
 }
+
+/// Handle block list command
+pub async fn handle_block_list_command(
+	start: u32,
+	end: u32,
+	step: Option<u32>,
+	node_url: &str,
+) -> crate::error::Result<()> {
+	log_print!(
+		"📦 Listing blocks from {} to {}",
+		start.to_string().bright_green(),
+		end.to_string().bright_green()
+	);
+
+	let step = step.unwrap_or(1);
+	if step > 1 {
+		log_print!("📏 Step: {}", step.to_string().bright_cyan());
+	}
+
+	let quantus_client = QuantusClient::new(node_url).await?;
+	list_blocks_in_range(&quantus_client, start, end, step).await
+}
+
+/// List blocks in range with summary information
+async fn list_blocks_in_range(
+	quantus_client: &QuantusClient,
+	start: u32,
+	end: u32,
+	step: u32,
+) -> crate::error::Result<()> {
+	use jsonrpsee::core::client::ClientT;
+
+	log_print!("🔍 Fetching block information...");
+
+	let mut block_count = 0;
+	let mut total_extrinsics = 0;
+	let mut total_events = 0;
+	let mut total_size = 0;
+
+	// Progress indicator
+	log_print!("📊 Processing {} blocks...", ((end - start) / step + 1).to_string().bright_cyan());
+
+	// Print table header
+	log_print!("");
+	log_print!(
+		"{:<20} {:<20} {:<12} {:<10} {:<8}",
+		"Block".bright_green().bold(),
+		"Time".bright_cyan().bold(),
+		"Extrinsics".bright_blue().bold(),
+		"Events".bright_yellow().bold(),
+		"Size".bright_magenta().bold()
+	);
+	log_print!(
+		"{:<20} {:<20} {:<12} {:<10} {:<8}",
+		"────────────────────".bright_green(),
+		"────────────────────".bright_cyan(),
+		"────────────".bright_blue(),
+		"──────────".bright_yellow(),
+		"──────".bright_magenta()
+	);
+
+	for block_num in (start..=end).step_by(step as usize) {
+		// Get block hash for this block number
+		let block_hash: subxt::utils::H256 = quantus_client
+			.rpc_client()
+			.request::<subxt::utils::H256, [u32; 1]>("chain_getBlockHash", [block_num])
+			.await
+			.map_err(|e| {
+				QuantusError::NetworkError(format!(
+					"Failed to get block hash for block {}: {:?}",
+					block_num, e
+				))
+			})?;
+
+		// Get block data
+		let block_data: serde_json::Value = quantus_client
+			.rpc_client()
+			.request::<serde_json::Value, [String; 1]>(
+				"chain_getBlock",
+				[format!("{:#x}", block_hash)],
+			)
+			.await
+			.map_err(|e| {
+				QuantusError::NetworkError(format!(
+					"Failed to get block data for block {}: {:?}",
+					block_num, e
+				))
+			})?;
+
+		// Extract basic info
+		let extrinsics_count = if let Some(block) = block_data.get("block") {
+			if let Some(extrinsics) = block.get("extrinsics") {
+				if let Some(extrinsics_array) = extrinsics.as_array() {
+					extrinsics_array.len()
+				} else {
+					0
+				}
+			} else {
+				0
+			}
+		} else {
+			0
+		};
+
+		// Get timestamp from storage
+		let storage_at = quantus_client.client().storage().at(block_hash);
+		let timestamp_addr = crate::chain::quantus_subxt::api::storage().timestamp().now();
+		let timestamp = storage_at.fetch(&timestamp_addr).await.ok().flatten();
+
+		// Get event count
+		let event_count_addr = crate::chain::quantus_subxt::api::storage().system().event_count();
+		let event_count = storage_at.fetch(&event_count_addr).await.ok().flatten().unwrap_or(0);
+
+		// Calculate block size in KB
+		let block_size_bytes = serde_json::to_string(&block_data).unwrap_or_default().len();
+		let block_size_kb = block_size_bytes as f64 / 1024.0;
+
+		// Update totals
+		block_count += 1;
+		total_extrinsics += extrinsics_count;
+		total_events += event_count;
+		total_size += block_size_bytes;
+
+		// Display block info - always show full date
+		let time_str = if let Some(ts) = timestamp {
+			let timestamp_secs = ts / 1000;
+			let datetime = chrono::DateTime::from_timestamp(timestamp_secs as i64, 0);
+			if let Some(dt) = datetime {
+				dt.format("%Y-%m-%d %H:%M:%S").to_string()
+			} else {
+				"unknown".to_string()
+			}
+		} else {
+			"unknown".to_string()
+		};
+
+		log_print!(
+			"📦 {:<18} {:<20} {:<12} {:<10} {:<8}",
+			format!("#{}", block_num).bright_green(),
+			time_str.bright_cyan(),
+			extrinsics_count.to_string().bright_blue(),
+			event_count.to_string().bright_yellow(),
+			format!("{:.1}K", block_size_kb).bright_magenta()
+		);
+	}
+
+	// Summary
+	log_print!("");
+	log_print!("📊 Summary:");
+	log_print!("   • Blocks processed: {}", block_count.to_string().bright_green());
+	log_print!("   • Total extrinsics: {}", total_extrinsics.to_string().bright_blue());
+	log_print!("   • Total events: {}", total_events.to_string().bright_yellow());
+	log_print!(
+		"   • Total size: {} KB",
+		format!("{:.1}", total_size as f64 / 1024.0).bright_magenta()
+	);
+	log_print!(
+		"   • Average extrinsics per block: {}",
+		format!("{:.1}", total_extrinsics as f64 / block_count as f64).bright_cyan()
+	);
+	log_print!(
+		"   • Average events per block: {}",
+		format!("{:.1}", total_events as f64 / block_count as f64).bright_cyan()
+	);
+
+	Ok(())
+}
