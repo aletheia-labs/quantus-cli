@@ -3,10 +3,75 @@ use crate::{
 	chain::client::QuantusClient, cli::storage, error::QuantusError, log_error, log_print,
 	log_success,
 };
+use clap::Subcommand;
 use colored::Colorize;
 
-/// Handle detailed block analysis
+/// Block management and analysis commands
+#[derive(Subcommand, Debug)]
+pub enum BlockCommands {
+	/// Detailed block analysis
+	Analyze {
+		/// Block number to analyze
+		#[arg(long)]
+		number: Option<u32>,
+
+		/// Block hash to analyze (alternative to number)
+		#[arg(long)]
+		hash: Option<String>,
+
+		/// Use latest block if no number/hash specified
+		#[arg(long)]
+		latest: bool,
+
+		/// Show storage statistics for this block
+		#[arg(long)]
+		storage: bool,
+
+		/// Show detailed extrinsic information
+		#[arg(long)]
+		extrinsics: bool,
+
+		/// Show events from this block
+		#[arg(long)]
+		events: bool,
+
+		/// Show all available information
+		#[arg(long)]
+		all: bool,
+	},
+
+	/// List blocks in range with summary info
+	List {
+		/// Start block number
+		#[arg(long)]
+		start: u32,
+		/// End block number
+		#[arg(long)]
+		end: u32,
+		/// Block step (default: 1)
+		#[arg(long)]
+		step: Option<u32>,
+	},
+}
+
+/// Handle block commands
 pub async fn handle_block_command(
+	command: BlockCommands,
+	node_url: &str,
+) -> crate::error::Result<()> {
+	match command {
+		BlockCommands::Analyze { number, hash, latest, storage, extrinsics, events, all } =>
+			handle_block_analyze_command(
+				number, hash, latest, storage, extrinsics, events, all, node_url,
+			)
+			.await,
+		BlockCommands::List { start, end, step } =>
+			handle_block_list_command(start, end, step, node_url).await,
+	}
+}
+
+/// Handle detailed block analysis
+async fn handle_block_analyze_command(
 	number: Option<u32>,
 	hash: Option<String>,
 	latest: bool,
