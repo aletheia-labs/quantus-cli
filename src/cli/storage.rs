@@ -1,4 +1,5 @@
 //! `quantus storage` subcommand - storage operations
+
 use crate::{
 	chain::{client::ChainConfig, quantus_subxt},
 	cli::progress_spinner::wait_for_tx_confirmation,
@@ -12,7 +13,7 @@ use sp_core::{
 	crypto::{AccountId32, Ss58Codec},
 	twox_128,
 };
-use std::str::FromStr;
+use std::{collections::BTreeMap, str::FromStr};
 use subxt::OnlineClient;
 
 /// Validate that a pallet exists in the chain metadata
@@ -90,10 +91,10 @@ pub enum StorageCommands {
 		#[arg(long)]
 		with_counts: bool,
 	},
-	/// Show storage size and count information.
+	/// Show storage statistics and count information.
 	///
 	/// Displays statistics about storage usage.
-	Size {
+	Stats {
 		/// The name of the pallet (optional, shows all if not specified)
 		#[arg(long)]
 		pallet: Option<String>,
@@ -207,10 +208,7 @@ pub async fn get_storage_raw(
 
 	let storage_at = quantus_client.client().storage().at(latest_block_hash);
 
-	let result = storage_at
-		.fetch_raw(key)
-		.await
-		.map_err(|e| QuantusError::NetworkError(format!("Failed to fetch storage: {:?}", e)))?;
+	let result = storage_at.fetch_raw(key).await?;
 
 	Ok(result)
 }
@@ -225,12 +223,7 @@ pub async fn get_storage_raw_at_block(
 
 	let storage_at = quantus_client.client().storage().at(block_hash);
 
-	let result = storage_at.fetch_raw(key).await.map_err(|e| {
-		QuantusError::NetworkError(format!(
-			"Failed to fetch storage at block {:?}: {:?}",
-			block_hash, e
-		))
-	})?;
+	let result = storage_at.fetch_raw(key).await?;
 
 	Ok(result)
 }
@@ -278,8 +271,7 @@ pub async fn list_storage_items(
 
 	if let Some(storage_metadata) = pallet.storage() {
 		let entries = storage_metadata.entries();
-		log_print!("Found {} storage items:", entries.len());
-		log_print!("");
+		log_print!("Found {} storage items: \n", entries.len());
 
 		for (index, entry) in entries.iter().enumerate() {
 			log_print!(
@@ -314,12 +306,12 @@ pub async fn list_pallets_with_storage(
 	let metadata = quantus_client.client().metadata();
 	let pallets: Vec<_> = metadata.pallets().collect();
 
-	let mut storage_pallets = Vec::new();
+	let mut storage_pallets = BTreeMap::new();
 
 	for pallet in pallets {
 		if let Some(storage_metadata) = pallet.storage() {
 			let entry_count = storage_metadata.entries().len();
-			storage_pallets.push((pallet.name(), entry_count));
+			storage_pallets.insert(pallet.name(), entry_count);
 		}
 	}
 
@@ -327,9 +319,6 @@ pub async fn list_pallets_with_storage(
 		log_print!("❌ No pallets with storage found.");
 		return Ok(());
 	}
-
-	// Sort by pallet name
-	storage_pallets.sort_by(|a, b| a.0.cmp(b.0));
 
 	for (index, (pallet_name, count)) in storage_pallets.iter().enumerate() {
 		if with_counts {
@@ -354,14 +343,13 @@ pub async fn list_pallets_with_storage(
 	Ok(())
 }
 
-/// Show storage size statistics
-pub async fn show_storage_size(
+/// Show storage statistics
+pub async fn show_storage_stats(
 	quantus_client: &crate::chain::client::QuantusClient,
 	pallet_name: Option<String>,
 	detailed: bool,
 ) -> crate::error::Result<()> {
-	log_print!("📊 Storage size statistics:");
-	log_print!("");
+	log_print!("📊 Storage size statistics: \n");
 
 	let metadata = quantus_client.client().metadata();
 
@@ -493,7 +481,7 @@ pub async fn count_storage_entries(
 	Ok(total_count)
 }
 
-/// Iterate through storage map entries with real RPC calls  
+/// Iterate through storage map entries with real RPC calls
 pub async fn iterate_storage_entries(
 	quantus_client: &crate::chain::client::QuantusClient,
 	pallet_name: &str,
@@ -780,8 +768,8 @@ pub async fn handle_storage_command(
 			list_storage_items(&quantus_client, &pallet, names_only).await,
 		StorageCommands::ListPallets { with_counts } =>
 			list_pallets_with_storage(&quantus_client, with_counts).await,
-		StorageCommands::Size { pallet, detailed } =>
-			show_storage_size(&quantus_client, pallet, detailed).await,
+		StorageCommands::Stats { pallet, detailed } =>
+			show_storage_stats(&quantus_client, pallet, detailed).await,
 		StorageCommands::Iterate { pallet, name, limit, decode_as, block } =>
 			iterate_storage_entries(&quantus_client, &pallet, &name, limit, decode_as, block).await,
 

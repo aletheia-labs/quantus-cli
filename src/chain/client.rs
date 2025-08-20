@@ -109,9 +109,7 @@ impl QuantusClient {
 		let rpc_client = RpcClient::new(ws_client.clone());
 
 		// Create SubXT client using the configured RPC client
-		let client = OnlineClient::<ChainConfig>::from_rpc_client(rpc_client)
-			.await
-			.map_err(|e| QuantusError::NetworkError(format!("Failed to connect: {:?}", e)))?;
+		let client = OnlineClient::<ChainConfig>::from_rpc_client(rpc_client).await?;
 
 		log_verbose!("✅ Connected to Quantus node successfully!");
 
@@ -177,12 +175,7 @@ impl QuantusClient {
 
 		let storage_at = self.client.storage().at(latest_block_hash);
 
-		let account_info = storage_at.fetch_or_default(&storage_addr).await.map_err(|e| {
-			crate::error::QuantusError::NetworkError(format!(
-				"Failed to fetch account info from best block: {:?}",
-				e
-			))
-		})?;
+		let account_info = storage_at.fetch_or_default(&storage_addr).await?;
 
 		log_verbose!("✅ Nonce from best block: {}", account_info.nonce);
 		Ok(account_info.nonce as u64)
