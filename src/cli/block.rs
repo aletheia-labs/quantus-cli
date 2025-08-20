@@ -31,6 +31,10 @@ pub enum BlockCommands {
 		#[arg(long)]
 		extrinsics: bool,
 
+		/// Show detailed information for ALL extrinsics (not just first 3)
+		#[arg(long)]
+		extrinsics_details: bool,
+
 		/// Show events from this block
 		#[arg(long)]
 		events: bool,
@@ -60,9 +64,26 @@ pub async fn handle_block_command(
 	node_url: &str,
 ) -> crate::error::Result<()> {
 	match command {
-		BlockCommands::Analyze { number, hash, latest, storage, extrinsics, events, all } =>
+		BlockCommands::Analyze {
+			number,
+			hash,
+			latest,
+			storage,
+			extrinsics,
+			extrinsics_details,
+			events,
+			all,
+		} =>
 			handle_block_analyze_command(
-				number, hash, latest, storage, extrinsics, events, all, node_url,
+				number,
+				hash,
+				latest,
+				storage,
+				extrinsics,
+				extrinsics_details,
+				events,
+				all,
+				node_url,
 			)
 			.await,
 		BlockCommands::List { start, end, step } =>
@@ -77,6 +98,7 @@ async fn handle_block_analyze_command(
 	latest: bool,
 	storage: bool,
 	extrinsics: bool,
+	extrinsics_details: bool,
 	events: bool,
 	all: bool,
 	node_url: &str,
@@ -142,8 +164,13 @@ async fn handle_block_analyze_command(
 		show_extrinsic_details(&block_data)?;
 	}
 
+	// Show detailed information for ALL extrinsics if requested
+	if extrinsics_details || all {
+		show_all_extrinsic_details(&block_data)?;
+	}
+
 	log_success!("✅ Block analysis complete!");
-	log_print!("💡 Use --all to see all information, or combine --storage --events --extrinsics");
+	log_print!("💡 Use --all to see all information, or combine --storage --events --extrinsics --extrinsics-details");
 
 	Ok(())
 }
@@ -355,6 +382,73 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 					log_print!(
 						"   ... and {} more extrinsics",
 						(extrinsics_array.len() - 3).to_string().bright_blue()
+					);
+				}
+			}
+		}
+	}
+	log_print!("");
+	Ok(())
+}
+
+/// Show detailed information for ALL extrinsics
+fn show_all_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Result<()> {
+	if let Some(block) = block_data.get("block") {
+		if let Some(extrinsics) = block.get("extrinsics") {
+			if let Some(extrinsics_array) = extrinsics.as_array() {
+				log_print!("🔧 ALL Extrinsics Details:");
+				log_print!(
+					"   • Total Count: {}",
+					extrinsics_array.len().to_string().bright_green()
+				);
+
+				// Calculate total size of all extrinsics in actual bytes
+				let mut total_size_bytes = 0;
+				let mut total_size_chars = 0;
+				for extrinsic in extrinsics_array.iter() {
+					if let Some(ext_str) = extrinsic.as_str() {
+						total_size_chars += ext_str.len();
+						// Convert hex string to actual bytes
+						if ext_str.starts_with("0x") {
+							// Remove "0x" prefix and convert hex to bytes
+							let hex_part = &ext_str[2..];
+							if hex_part.len() % 2 == 0 {
+								total_size_bytes += hex_part.len() / 2;
+							} else {
+								total_size_bytes += (hex_part.len() + 1) / 2;
+							}
+						} else {
+							// If not hex, assume it's already in bytes
+							total_size_bytes += ext_str.len();
+						}
+					}
+				}
+				log_print!(
+					"   • Total Size: {} bytes ({} chars)",
+					total_size_bytes.to_string().bright_magenta(),
+					total_size_chars.to_string().bright_cyan()
+				);
+
+				// Show all extrinsics with details
+				for (index, extrinsic) in extrinsics_array.iter().enumerate() {
+					let ext_str = extrinsic.as_str().unwrap_or("unknown");
+					let ext_size_chars = ext_str.len();
+					let ext_size_bytes = if ext_str.starts_with("0x") {
+						let hex_part = &ext_str[2..];
+						if hex_part.len() % 2 == 0 {
+							hex_part.len() / 2
+						} else {
+							(hex_part.len() + 1) / 2
+						}
+					} else {
+						ext_str.len()
+					};
+					log_print!(
+						"   {}. Size: {} bytes ({} chars), Data: {}...",
+						(index + 1).to_string().bright_yellow(),
+						ext_size_bytes.to_string().bright_blue(),
+						ext_size_chars.to_string().bright_cyan(),
+						if ext_str.len() > 20 { &ext_str[..20] } else { ext_str }.bright_magenta()
 					);
 				}
 			}
