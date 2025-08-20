@@ -335,9 +335,8 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 					if let Some(ext_str) = extrinsic.as_str() {
 						total_size_chars += ext_str.len();
 						// Convert hex string to actual bytes
-						if ext_str.starts_with("0x") {
+						if let Some(hex_part) = ext_str.strip_prefix("0x") {
 							// Remove "0x" prefix and convert hex to bytes
-							let hex_part = &ext_str[2..];
 							if hex_part.len() % 2 == 0 {
 								total_size_bytes += hex_part.len() / 2;
 							} else {
@@ -359,8 +358,7 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 				for (index, extrinsic) in extrinsics_array.iter().take(3).enumerate() {
 					let ext_str = extrinsic.as_str().unwrap_or("unknown");
 					let ext_size_chars = ext_str.len();
-					let ext_size_bytes = if ext_str.starts_with("0x") {
-						let hex_part = &ext_str[2..];
+					let ext_size_bytes = if let Some(hex_part) = ext_str.strip_prefix("0x") {
 						if hex_part.len() % 2 == 0 {
 							hex_part.len() / 2
 						} else {
@@ -409,9 +407,8 @@ fn show_all_extrinsic_details(block_data: &serde_json::Value) -> crate::error::R
 					if let Some(ext_str) = extrinsic.as_str() {
 						total_size_chars += ext_str.len();
 						// Convert hex string to actual bytes
-						if ext_str.starts_with("0x") {
+						if let Some(hex_part) = ext_str.strip_prefix("0x") {
 							// Remove "0x" prefix and convert hex to bytes
-							let hex_part = &ext_str[2..];
 							if hex_part.len() % 2 == 0 {
 								total_size_bytes += hex_part.len() / 2;
 							} else {
@@ -433,8 +430,7 @@ fn show_all_extrinsic_details(block_data: &serde_json::Value) -> crate::error::R
 				for (index, extrinsic) in extrinsics_array.iter().enumerate() {
 					let ext_str = extrinsic.as_str().unwrap_or("unknown");
 					let ext_size_chars = ext_str.len();
-					let ext_size_bytes = if ext_str.starts_with("0x") {
-						let hex_part = &ext_str[2..];
+					let ext_size_bytes = if let Some(hex_part) = ext_str.strip_prefix("0x") {
 						if hex_part.len() % 2 == 0 {
 							hex_part.len() / 2
 						} else {
