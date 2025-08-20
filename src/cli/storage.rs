@@ -902,8 +902,15 @@ fn encode_storage_key(key_value: &str, key_type: &str) -> crate::error::Result<V
 				.map_err(|e| crate::error::QuantusError::Generic(format!("Invalid u32: {}", e)))?;
 			Ok(value.encode())
 		},
+		"hex" | "raw" => {
+			// For hex/raw keys, decode the hex string directly
+			let value_hex = key_value.strip_prefix("0x").unwrap_or(key_value);
+			hex::decode(value_hex).map_err(|e| {
+				crate::error::QuantusError::Generic(format!("Invalid hex value: {}", e))
+			})
+		},
 		_ => Err(crate::error::QuantusError::Generic(format!(
-			"Unsupported key type: {}. Supported types: accountid, u64, u128, u32",
+			"Unsupported key type: {}. Supported types: accountid, u64, u128, u32, hex, raw",
 			key_type
 		))),
 	}
