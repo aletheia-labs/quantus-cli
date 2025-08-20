@@ -349,8 +349,8 @@ fn show_extrinsic_details(block_data: &serde_json::Value) -> crate::error::Resul
 					}
 				}
 				log_print!(
-					"   • Total Size: {} bytes ({} chars)",
-					total_size_bytes.to_string().bright_magenta(),
+					"   • Total Size: {:.1} KB ({} chars)",
+					total_size_bytes as f64 / 1024.0,
 					total_size_chars.to_string().bright_cyan()
 				);
 
@@ -421,8 +421,8 @@ fn show_all_extrinsic_details(block_data: &serde_json::Value) -> crate::error::R
 					}
 				}
 				log_print!(
-					"   • Total Size: {} bytes ({} chars)",
-					total_size_bytes.to_string().bright_magenta(),
+					"   • Total Size: {:.1} KB ({} chars)",
+					total_size_bytes as f64 / 1024.0,
 					total_size_chars.to_string().bright_cyan()
 				);
 
@@ -566,8 +566,37 @@ async fn list_blocks_in_range(
 		let event_count_addr = crate::chain::quantus_subxt::api::storage().system().event_count();
 		let event_count = storage_at.fetch(&event_count_addr).await.ok().flatten().unwrap_or(0);
 
-		// Calculate block size in KB
-		let block_size_bytes = serde_json::to_string(&block_data).unwrap_or_default().len();
+		// Calculate block size in KB based on actual data
+		let block_size_bytes = if let Some(block) = block_data.get("block") {
+			if let Some(extrinsics) = block.get("extrinsics") {
+				if let Some(extrinsics_array) = extrinsics.as_array() {
+					// Calculate size from actual extrinsic data
+					let mut total_bytes = 0;
+					for extrinsic in extrinsics_array.iter() {
+						if let Some(ext_str) = extrinsic.as_str() {
+							// Remove "0x" prefix and convert hex to bytes
+							if let Some(hex_part) = ext_str.strip_prefix("0x") {
+								if hex_part.len() % 2 == 0 {
+									total_bytes += hex_part.len() / 2;
+								} else {
+									total_bytes += (hex_part.len() + 1) / 2;
+								}
+							} else {
+								total_bytes += ext_str.len();
+							}
+						}
+					}
+					// Add some overhead for block header (approximate)
+					total_bytes + 1024 // ~1KB for header
+				} else {
+					0
+				}
+			} else {
+				0
+			}
+		} else {
+			0
+		};
 		let block_size_kb = block_size_bytes as f64 / 1024.0;
 
 		// Update totals
