@@ -2,6 +2,7 @@ use crate::{log_error, log_print, log_success, log_verbose};
 use clap::Subcommand;
 use colored::Colorize;
 
+pub mod block;
 pub mod common;
 pub mod events;
 pub mod generic_call;
@@ -183,6 +184,10 @@ pub enum Commands {
 
 	/// Check compatibility with the connected node
 	CompatibilityCheck,
+
+	/// Block management and analysis commands
+	#[command(subcommand)]
+	Block(block::BlockCommands),
 }
 
 /// Developer subcommands
@@ -274,6 +279,7 @@ pub async fn execute_command(
 			Ok(())
 		},
 		Commands::CompatibilityCheck => handle_compatibility_check(node_url).await,
+		Commands::Block(block_cmd) => block::handle_block_command(block_cmd, node_url).await,
 	}
 }
 
