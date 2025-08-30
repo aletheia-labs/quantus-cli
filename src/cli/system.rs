@@ -306,6 +306,7 @@ pub async fn handle_system_extended_command(
 	node_url: &str,
 	show_runtime: bool,
 	show_metadata: bool,
+	show_rpc_methods: bool,
 	verbose: bool,
 ) -> crate::error::Result<()> {
 	log_print!("🚀 Extended System Information");
@@ -323,6 +324,51 @@ pub async fn handle_system_extended_command(
 	if show_metadata {
 		log_print!("");
 		get_metadata_stats(quantus_client.client()).await?;
+	}
+
+	if show_rpc_methods {
+		log_print!("");
+		list_rpc_methods(&quantus_client).await?;
+	}
+
+	Ok(())
+}
+
+/// List all available JSON-RPC methods from the connected node
+async fn list_rpc_methods(quantus_client: &QuantusClient) -> crate::error::Result<()> {
+	use jsonrpsee::core::client::ClientT;
+
+	log_print!("🧭 JSON-RPC Methods exposed by node:");
+
+	let response: serde_json::Value = quantus_client
+		.rpc_client()
+		.request::<serde_json::Value, [(); 0]>("rpc_methods", [])
+		.await
+		.map_err(|e| {
+			crate::error::QuantusError::NetworkError(format!(
+				"Failed to fetch rpc_methods: {:?}",
+				e
+			))
+		})?;
+
+	if let Some(methods) = response.get("methods").and_then(|v| v.as_array()) {
+		for method in methods {
+			if let Some(name) = method.as_str() {
+				log_print!("\t{}", name);
+			}
+		}
+		if let Some(version) = response.get("version").and_then(|v| v.as_u64()) {
+			log_verbose!("RPC methods schema version: {}", version);
+		}
+	} else if let Some(array) = response.as_array() {
+		for method in array {
+			if let Some(name) = method.as_str() {
+				log_print!("\t{}", name);
+			}
+		}
+	} else {
+		log_print!("   (no methods returned or unexpected format)");
+		log_verbose!("rpc_methods raw response: {:?}", response);
 	}
 
 	Ok(())
