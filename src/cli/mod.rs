@@ -173,7 +173,7 @@ pub enum Commands {
 		metadata: bool,
 
 		/// Show available JSON-RPC methods exposed by the node
-		#[arg(long, alias = "rpc")]
+		#[arg(long)]
 		rpc_methods: bool,
 	},
 

@@ -336,10 +336,7 @@ async fn list_rpc_methods(quantus_client: &QuantusClient) -> crate::error::Resul
 		.request::<serde_json::Value, [(); 0]>("rpc_methods", [])
 		.await
 		.map_err(|e| {
-			crate::error::QuantusError::NetworkError(format!(
-				"Failed to fetch rpc_methods: {:?}",
-				e
-			))
+			crate::error::QuantusError::NetworkError(format!("Failed to fetch rpc_methods: {e:?}"))
 		})?;
 
 	if let Some(methods) = response.get("methods").and_then(|v| v.as_array()) {
