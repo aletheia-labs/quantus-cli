@@ -171,6 +171,10 @@ pub enum Commands {
 		/// Show metadata statistics
 		#[arg(long)]
 		metadata: bool,
+
+		/// Show available JSON-RPC methods exposed by the node
+		#[arg(long)]
+		rpc_methods: bool,
 	},
 
 	/// Explore chain metadata and available pallets/calls
@@ -285,9 +289,16 @@ pub async fn execute_command(
 				block, block_hash, finalized, pallet, raw, !no_decode, node_url,
 			)
 			.await,
-		Commands::System { runtime, metadata } =>
-			if runtime || metadata {
-				system::handle_system_extended_command(node_url, runtime, metadata, verbose).await
+		Commands::System { runtime, metadata, rpc_methods } =>
+			if runtime || metadata || rpc_methods {
+				system::handle_system_extended_command(
+					node_url,
+					runtime,
+					metadata,
+					rpc_methods,
+					verbose,
+				)
+				.await
 			} else {
 				system::handle_system_command(node_url).await
 			},
