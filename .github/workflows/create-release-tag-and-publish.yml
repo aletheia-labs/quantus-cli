@@ -119,8 +119,8 @@ jobs:
       - name: Build release (all features)
         run: cargo build --locked --release --all-features
 
-      - name: Build release (no default features)
-        run: cargo build --locked --release --no-default-features
+      - name: Build release (library only, no default features)
+        run: cargo build --lib --locked --release --no-default-features
 
       - name: Test release
         run: cargo test --locked --release --all-features
