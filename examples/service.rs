@@ -6,7 +6,7 @@
 //! 3. Async operations for web services
 //! 4. Error handling and logging
 
-use quantus_cli::{
+use al_quantus_cli::{
 	chain::client::QuantusClient,
 	error::{QuantusError, Result},
 	wallet::{QuantumKeyPair, WalletManager},
@@ -172,7 +172,7 @@ impl WalletService {
 		client: &QuantusClient,
 		account_id: &AccountId32,
 	) -> Result<u128> {
-		use quantus_cli::chain::quantus_subxt::api;
+		use al_quantus_cli::chain::quantus_subxt::api;
 
 		// Convert to subxt account ID
 		let account_bytes: [u8; 32] = *account_id.as_ref();
@@ -195,7 +195,7 @@ impl WalletService {
 		to_account_id: &AccountId32,
 		amount: u128,
 	) -> Result<subxt::utils::H256> {
-		use quantus_cli::chain::quantus_subxt::api;
+		use al_quantus_cli::chain::quantus_subxt::api;
 
 		// Convert recipient to subxt format
 		let to_account_bytes: [u8; 32] = *to_account_id.as_ref();
@@ -307,7 +307,7 @@ async fn demonstrate_service_error_handling() -> Result<()> {
 /// Example of concurrent operations
 #[allow(dead_code)]
 async fn demonstrate_concurrent_operations() -> Result<()> {
-	let service = Arc::new(WalletService::new("ws://127.0.0.1:9944").await?);
+	let service: Arc<WalletService> = Arc::new(WalletService::new("ws://127.0.0.1:9944").await?);
 
 	// Create multiple wallets concurrently
 	let mut handles = Vec::new();

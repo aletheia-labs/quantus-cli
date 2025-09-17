@@ -7,7 +7,7 @@
 //! 4. Performing blockchain operations
 //! 5. Error handling
 
-use quantus_cli::{
+use al_quantus_cli::{
 	chain::client::QuantusClient,
 	error::{QuantusError, Result},
 	wallet::{QuantumKeyPair, WalletManager},
@@ -117,7 +117,7 @@ impl QuantusApp {
 
 	/// Private method to get account balance
 	async fn get_account_balance(&self, account_id: &AccountId32) -> Result<u128> {
-		use quantus_cli::chain::quantus_subxt::api;
+		use al_quantus_cli::chain::quantus_subxt::api;
 
 		// Convert to subxt account ID
 		let account_bytes: [u8; 32] = *account_id.as_ref();
@@ -139,7 +139,7 @@ impl QuantusApp {
 		to_account_id: &AccountId32,
 		amount: u128,
 	) -> Result<subxt::utils::H256> {
-		use quantus_cli::chain::quantus_subxt::api;
+		use al_quantus_cli::chain::quantus_subxt::api;
 
 		// Convert recipient to subxt format
 		let to_account_bytes: [u8; 32] = *to_account_id.as_ref();
@@ -215,7 +215,7 @@ async fn demonstrate_error_handling() -> Result<()> {
 	// Try to get balance of non-existent wallet
 	match app.get_balance("non_existent_wallet", "password").await {
 		Ok(balance) => println!("Balance: {balance}"),
-		Err(QuantusError::Wallet(quantus_cli::error::WalletError::NotFound)) => {
+		Err(QuantusError::Wallet(al_quantus_cli::error::WalletError::NotFound)) => {
 			println!("❌ Wallet not found");
 		},
 		Err(e) => {
@@ -252,7 +252,7 @@ async fn demonstrate_batch_operations() -> Result<()> {
 				addresses.push(address);
 				println!("✅ Created {name}");
 			},
-			Err(QuantusError::Wallet(quantus_cli::error::WalletError::AlreadyExists)) => {
+			Err(QuantusError::Wallet(al_quantus_cli::error::WalletError::AlreadyExists)) => {
 				println!("⚠️  Wallet {name} already exists");
 			},
 			Err(e) => {

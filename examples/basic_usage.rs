@@ -6,7 +6,7 @@
 //! 3. Perform transactions using the library API
 //! 4. Query blockchain data
 
-use quantus_cli::{
+use al_quantus_cli::{
 	chain::client::QuantusClient,
 	error::Result,
 	wallet::{QuantumKeyPair, WalletManager},
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
 
 /// Get account balance using the client
 async fn get_account_balance(client: &QuantusClient, account_id: &AccountId32) -> Result<u128> {
-	use quantus_cli::chain::quantus_subxt::api;
+	use al_quantus_cli::chain::quantus_subxt::api;
 
 	// Convert to subxt account ID
 	let account_bytes: [u8; 32] = *account_id.as_ref();
@@ -83,11 +83,12 @@ async fn send_tokens(
 	to_address: &str,
 	amount: u128,
 ) -> Result<subxt::utils::H256> {
-	use quantus_cli::chain::quantus_subxt::api;
+	use al_quantus_cli::chain::quantus_subxt::api;
 
 	// Parse recipient address
-	let to_account_id = AccountId32::from_ss58check(to_address)
-		.map_err(|e| quantus_cli::error::QuantusError::Generic(format!("Invalid address: {e}")))?;
+	let to_account_id = AccountId32::from_ss58check(to_address).map_err(|e| {
+		al_quantus_cli::error::QuantusError::Generic(format!("Invalid address: {e}"))
+	})?;
 	let to_account_bytes: [u8; 32] = *to_account_id.as_ref();
 	let to_subxt_account_id = subxt::utils::AccountId32::from(to_account_bytes);
 

@@ -3,7 +3,16 @@
 //! This module provides shared functionality for creating and managing clients
 //! across all CLI modules.
 
-use crate::{error::QuantusError, log_verbose};
+use crate::error::QuantusError;
+
+// Conditional logging - only available with CLI feature
+#[cfg(feature = "cli")]
+use crate::log_verbose;
+
+#[cfg(not(feature = "cli"))]
+macro_rules! log_verbose {
+	($($arg:tt)*) => {};
+}
 use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
 use qp_dilithium_crypto::types::DilithiumSignatureScheme;
 use qp_poseidon::PoseidonHasher;
@@ -250,8 +259,9 @@ impl QuantusClient {
 						}
 					}
 				},
-				Err(e) => {
-					log_verbose!("❌ {} failed: {:?}", call_name, e);
+				Err(_e) => {
+					#[cfg(feature = "cli")]
+					log_verbose!("❌ {} failed: {:?}", call_name, _e);
 				},
 			}
 		}
