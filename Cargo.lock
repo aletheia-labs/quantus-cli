@@ -86,6 +86,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-quantus-cli"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "chrono",
+ "clap",
+ "colored",
+ "dirs",
+ "hex",
+ "jsonrpsee",
+ "parity-scale-codec",
+ "qp-dilithium-crypto",
+ "qp-poseidon",
+ "qp-rusty-crystals-dilithium",
+ "qp-rusty-crystals-hdwallet",
+ "rand 0.9.2",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sp-core",
+ "sp-runtime",
+ "subxt",
+ "subxt-metadata",
+ "tempfile",
+ "thiserror 2.0.16",
+ "tokio",
+ "toml 0.9.5",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3452,38 +3484,6 @@ dependencies = [
  "sha2 0.10.9",
  "sp-core",
  "thiserror 2.0.16",
-]
-
-[[package]]
-name = "quantus-cli"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "argon2",
- "chrono",
- "clap",
- "colored",
- "dirs",
- "hex",
- "jsonrpsee",
- "parity-scale-codec",
- "qp-dilithium-crypto",
- "qp-poseidon",
- "qp-rusty-crystals-dilithium",
- "qp-rusty-crystals-hdwallet",
- "rand 0.9.2",
- "rpassword",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sp-core",
- "sp-runtime",
- "subxt",
- "subxt-metadata",
- "tempfile",
- "thiserror 2.0.16",
- "tokio",
- "toml 0.9.5",
 ]
 
 [[package]]
