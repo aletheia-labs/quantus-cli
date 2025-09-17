@@ -50,7 +50,6 @@ jobs:
           - macos-latest
         rust:
           - stable
-          - nightly
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust ${{ matrix.rust }}
