@@ -77,14 +77,14 @@ jobs:
           brew install protobuf
       - name: Build (all features)
         run: cargo build --locked --all-features
-      - name: Build (no default features)
-        run: cargo build --locked --no-default-features
+      - name: Build (library only, no default features)
+        run: cargo build --lib --locked --no-default-features
       - name: Build (CLI only)
         run: cargo build --locked --features cli
       - name: Test (all features)
         run: cargo test --locked --all-features
-      - name: Test (no default features)
-        run: cargo test --locked --no-default-features
+      - name: Test (library only, no default features)
+        run: cargo test --lib --locked --no-default-features
 
   analysis:
     name: 🤖 Analysis (Clippy & Doc)

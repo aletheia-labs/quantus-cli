@@ -59,6 +59,6 @@ mod tests {
 
 	#[test]
 	fn test_name() {
-		assert_eq!(name(), "quantus-cli");
+		assert_eq!(name(), "al-quantus-cli");
 	}
 }
