@@ -78,7 +78,7 @@ jobs:
     needs: [create-tag, format-checks]
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os:
           - ubuntu-latest

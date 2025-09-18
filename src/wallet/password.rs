@@ -1,5 +1,5 @@
-use crate::{error::Result, log_print, log_verbose, wallet::WalletManager};
 use colored::Colorize;
+use crate::{error::Result, log_print, log_verbose, wallet::WalletManager};
 
 /// Get wallet password with convenience options
 pub fn get_wallet_password(
