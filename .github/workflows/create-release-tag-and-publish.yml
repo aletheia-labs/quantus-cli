@@ -172,7 +172,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ needs.create-tag.outputs.version }}
         run: |
-          release_notes="Automated release for al-quantus-cli version $NEW_VERSION."
+          release_notes="Automated release for quantus-cli version $NEW_VERSION."
           printf "%s" "$release_notes" > release_notes.txt
 
           # Add draft flag if this is a draft release
@@ -186,7 +186,7 @@ jobs:
 
           gh release create "$NEW_VERSION" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Quantus al-quantus-cli - $NEW_VERSION" \
+            --title "Quantus quantus-cli - $NEW_VERSION" \
             --notes-file release_notes.txt \
             --target main \
             $DRAFT_FLAG

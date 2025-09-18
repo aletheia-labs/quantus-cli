@@ -1,21 +1,22 @@
 [package]
-name = "al-quantus-cli"
+name = "quantus-cli"
 version = "0.0.4"
 edition = "2021"
 authors = ["Quantus Network"]
 license = "Apache-2.0"
-description = "Command line interface and library for interacting with the Quantus Network (test version)"
+description = "Command line interface and library for interacting with the Quantus Network"
+homepage = "https://quantus.com"
 repository = "https://github.com/Quantus-Network/quantus-cli"
-keywords = ["blockchain", "cli", "crypto", "quantum"]
+keywords = ["blockchain", "cli", "crypto", "quantum", "quantus-network"]
 categories = ["api-bindings", "command-line-utilities", "cryptography"]
 readme = "README.md"
 
 [lib]
-name = "al_quantus_cli"
+name = "quantus_cli"
 path = "src/lib.rs"
 
 [[bin]]
-name = "al_quantus"
+name = "quantus"
 path = "src/main.rs"
 
 

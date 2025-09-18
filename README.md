@@ -21,14 +21,14 @@ A modern command line interface for interacting with the Quantus Network, featur
 
 ### Installation
 
-#### From crates.io (Test version)
+#### From crates.io
 
 ```bash
-# Install the CLI tool (test version)
-cargo install al-quantus-cli
+# Install the CLI tool
+cargo install quantus-cli
 
-# The binary will be available as `al_quantus`
-al_quantus --help
+# The binary will be available as `quantus`
+quantus --help
 ```
 
 #### From source
@@ -39,7 +39,7 @@ git clone https://github.com/Quantus-Network/quantus-cli
 cd quantus-cli
 cargo build --release
 
-# The binary will be available as `al_quantus`
+# The binary will be available as `quantus`
 ```
 
 #### As a library
@@ -48,11 +48,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-# Full functionality (CLI + library) - test version
-al-quantus-cli = "0.1.0"
+# Full functionality (CLI + library)
+quantus-cli = "0.1.0"
 
-# Library only (smaller dependencies) - test version
-al-quantus-cli = { version = "0.1.0", default-features = false }
+# Library only (smaller dependencies)
+quantus-cli = { version = "0.1.0", default-features = false }
 ```
 
 ### First Steps
@@ -61,12 +61,12 @@ Start by exploring the available commands:
 
 ```bash
 # Get help to see all available commands
-al_quantus --help
+quantus --help
 
 # Explore specific command groups
-al_quantus wallet --help
-al_quantus send --help
-al_quantus tech-collective --help
+quantus wallet --help
+quantus send --help
+quantus tech-collective --help
 ```
 
 The CLI provides comprehensive help at every level, allowing you to discover functionality step by step.
@@ -76,9 +76,9 @@ The CLI provides comprehensive help at every level, allowing you to discover fun
 ### Help System
 The CLI provides comprehensive help at every level. Every command and subcommand supports `--help`:
 
-- **Main level**: `al_quantus --help` shows all available top-level commands
-- **Command level**: `al_quantus <command> --help` shows options for specific commands
-- **Subcommand level**: `al_quantus <command> <subcommand> --help` shows options for subcommands
+- **Main level**: `quantus --help` shows all available top-level commands
+- **Command level**: `quantus <command> --help` shows options for specific commands
+- **Subcommand level**: `quantus <command> <subcommand> --help` shows options for subcommands
 - **Deep nesting**: Help is available at any depth of command nesting
 
 This hierarchical help system allows you to discover available functionality step by step, starting from the main help and drilling down to specific command options.
@@ -101,7 +101,7 @@ These options work on every command:
 The CLI uses a hierarchical structure:
 
 ```
-al_quantus [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_OPTIONS]
+quantus [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_OPTIONS]
 ```
 
 **Structure:**
@@ -112,8 +112,8 @@ Start with the main help and drill down to explore available functionality. The 
 
 ### Quick Reference
 Common navigation patterns:
-- Start with `al_quantus --help` to see all available commands
-- Use `al_quantus <command> --help` to explore specific command options
+- Start with `quantus --help` to see all available commands
+- Use `quantus <command> --help` to explore specific command options
 - Add `--verbose` to any command for detailed debugging information
 - Use `--node-url` to connect to different nodes (defaults to localhost)
 
@@ -132,8 +132,8 @@ Common navigation patterns:
 
 The CLI provides a comprehensive set of commands for blockchain interaction. Start by exploring the help system to discover available functionality:
 
-1. **Explore commands**: Use `al_quantus --help` to see all available commands
-2. **Discover options**: Use `al_quantus <command> --help` to see command-specific options
+1. **Explore commands**: Use `quantus --help` to see all available commands
+2. **Discover options**: Use `quantus <command> --help` to see command-specific options
 3. **Get details**: Add `--verbose` to any command for detailed execution information
 4. **Connect to nodes**: Use `--node-url` to connect to different blockchain nodes
 

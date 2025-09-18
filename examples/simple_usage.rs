@@ -2,7 +2,7 @@
 //!
 //! This example shows basic usage without complex transactions
 
-use al_quantus_cli::{chain::client::QuantusClient, error::Result, wallet::WalletManager};
+use quantus_cli::{chain::client::QuantusClient, error::Result, wallet::WalletManager};
 
 #[tokio::main]
 async fn main() -> Result<()> {

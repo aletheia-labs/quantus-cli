@@ -143,7 +143,7 @@ jobs:
           sed -i -E "s/^version\s*=\s*\"[0-9a-zA-Z.-]+\"/version = \"$new_cargo_version\"/" Cargo.toml
           
           # Update Cargo.lock
-          cargo update --package al-quantus-cli
+          cargo update --package quantus-cli
 
           # Commit changes
           git config user.name "${{ github.actor }}"
