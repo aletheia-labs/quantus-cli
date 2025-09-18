@@ -116,23 +116,23 @@ jobs:
         run: |
           brew install protobuf
 
-      - name: Build release (all features)
-        run: cargo build --locked --release --all-features
+      - name: Build release (all targets)
+        run: cargo build --locked --release
 
-      - name: Build release (library only, no default features)
-        run: cargo build --lib --locked --release --no-default-features
+      - name: Build release (library only)
+        run: cargo build --lib --locked --release
 
       - name: Test release
-        run: cargo test --locked --release --all-features
+        run: cargo test --locked --release
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Generate documentation
-        run: cargo doc --locked --no-deps --all-features
+        run: cargo doc --locked --no-deps
 
       - name: Check documentation
-        run: cargo doc --locked --no-deps --all-features --document-private-items
+        run: cargo doc --locked --no-deps --document-private-items
 
       - name: Build examples
         run: cargo build --examples --locked --release

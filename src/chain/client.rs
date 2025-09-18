@@ -5,14 +5,8 @@
 
 use crate::error::QuantusError;
 
-// Conditional logging - only available with CLI feature
-#[cfg(feature = "cli")]
+// Logging
 use crate::log_verbose;
-
-#[cfg(not(feature = "cli"))]
-macro_rules! log_verbose {
-	($($arg:tt)*) => {};
-}
 use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
 use qp_dilithium_crypto::types::DilithiumSignatureScheme;
 use qp_poseidon::PoseidonHasher;
@@ -260,7 +254,6 @@ impl QuantusClient {
 					}
 				},
 				Err(_e) => {
-					#[cfg(feature = "cli")]
 					log_verbose!("❌ {} failed: {:?}", call_name, _e);
 				},
 			}

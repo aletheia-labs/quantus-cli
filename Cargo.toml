@@ -18,14 +18,10 @@ path = "src/lib.rs"
 name = "al_quantus"
 path = "src/main.rs"
 
-[features]
-default = ["cli"]
-cli = ["dep:clap", "dep:colored", "dep:rpassword"]
-library-only = []
 
 [dependencies]
 # CLI and async runtime
-clap = { version = "4.5", features = ["derive"], optional = true }
+clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1.46", features = ["full"] }
 
 # Serialization and configuration
@@ -37,14 +33,14 @@ toml = "0.9"
 thiserror = "2.0"
 
 # Terminal UI
-colored = { version = "3.0", optional = true }
+colored = "3.0"
 
 # Additional utilities
 sha2 = "0.10"
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0"
-rpassword = { version = "7.4", optional = true }
+rpassword = "7.4"
 
 # Quantum-Safe Encryption
 argon2 = "0.5"   # Password-based key derivation (quantum-safe)

@@ -1,11 +1,7 @@
-#[cfg(feature = "cli")]
+use crate::{error::Result, log_print, log_verbose, wallet::WalletManager};
 use colored::Colorize;
 
-#[cfg(feature = "cli")]
-use crate::{error::Result, log_print, log_verbose, wallet::WalletManager};
-
 /// Get wallet password with convenience options
-#[cfg(feature = "cli")]
 pub fn get_wallet_password(
 	wallet_name: &str,
 	password: Option<String>,
@@ -57,7 +53,6 @@ pub fn get_wallet_password(
 }
 
 /// Get mnemonic phrase from user
-#[cfg(feature = "cli")]
 pub fn get_mnemonic_from_user() -> Result<String> {
 	log_print!("{}", "Please enter or paste your secret phrase:".bright_yellow());
 	let mnemonic = rpassword::read_password().map_err(|e| {
@@ -67,7 +62,6 @@ pub fn get_mnemonic_from_user() -> Result<String> {
 }
 
 /// Get password from user securely
-#[cfg(feature = "cli")]
 pub fn get_password_from_user(prompt: &str) -> Result<String> {
 	log_print!("{}", prompt.bright_yellow());
 	let password = rpassword::read_password().map_err(|e| {

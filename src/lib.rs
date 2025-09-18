@@ -5,11 +5,9 @@
 //! the Quantus blockchain.
 
 pub mod chain;
-#[cfg(feature = "cli")]
 pub mod cli;
 pub mod config;
 pub mod error;
-#[cfg(feature = "cli")]
 pub mod log;
 pub mod wallet;
 
@@ -27,7 +25,6 @@ pub use sp_core::crypto::AccountId32;
 pub use sp_runtime::MultiAddress;
 
 // Re-export transfer functions for library usage
-#[cfg(feature = "cli")]
 pub use cli::send::{
 	batch_transfer, format_balance_with_symbol, get_balance, transfer, transfer_with_nonce,
 };

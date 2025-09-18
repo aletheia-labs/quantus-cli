@@ -132,7 +132,6 @@ impl WalletManager {
 	}
 
 	/// Export a wallet's mnemonic phrase
-	#[cfg(feature = "cli")]
 	pub fn export_mnemonic(&self, name: &str, password: Option<&str>) -> Result<String> {
 		let final_password = password::get_wallet_password(name, password.map(String::from), None)?;
 
@@ -286,7 +285,6 @@ impl WalletManager {
 	}
 }
 
-#[cfg(feature = "cli")]
 pub fn load_keypair_from_wallet(
 	wallet_name: &str,
 	password: Option<String>,
