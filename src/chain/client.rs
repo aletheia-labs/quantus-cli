@@ -3,10 +3,7 @@
 //! This module provides shared functionality for creating and managing clients
 //! across all CLI modules.
 
-use crate::error::QuantusError;
-
-// Logging
-use crate::log_verbose;
+use crate::{error::QuantusError, log_verbose};
 use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
 use qp_dilithium_crypto::types::DilithiumSignatureScheme;
 use qp_poseidon::PoseidonHasher;
